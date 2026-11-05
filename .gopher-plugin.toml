@@ -1,0 +1,76 @@
+[gopher]
+schema_version = 5
+
+[project]
+module_roots = []
+package_patterns = ["./..."]
+
+[developer]
+idiom_policy = "latest-compatible"
+test_workflow = "strict-tdd"
+
+[complexity]
+mode = "advisory"
+cyclomatic_max = 15
+cognitive_max = 20
+maintainability_min = 20
+function_lines_max = 60
+file_lines_max = 500
+
+[test-quality]
+coverage_target = 80
+coverage_regression_max = 0
+mutation_mode = "advisory"
+mutation_target = 75
+quality_lab_families = []
+
+[modernize]
+target_go = "declared"
+apply_fixes = false
+dependency_updates = "none"
+
+[refactor]
+require_passing_baseline = true
+require_behavior_tests = true
+
+[tools]
+complexity = "auto"
+mutation = "auto"
+modernize = "auto"
+
+[doctor]
+profile = "standard"
+deadline_ms = 2000
+max_findings = 20
+required_rules = []
+
+[fuzz]
+local_budget_seconds = 60
+ci_budget_seconds = 300
+repro_runs = 3
+
+[architecture]
+workspace_mode = "advisory"
+tidy_mode = "advisory"
+release_mode = "independent"
+replace_mode = "local-only"
+
+[agents]
+enabled = true
+developer_model = "shipped"
+developer_effort = "shipped"
+architect_model = "shipped"
+architect_effort = "shipped"
+reviewer_model = "shipped"
+reviewer_effort = "shipped"
+reviewer_max_parallel = 7
+authorization = "handback"
+policy_divergence = "report"
+
+[workflow]
+planning_preflight = ["architecture:triage"]
+planning_require_structure_decision = false
+implementation_owner = "developer"
+post_implementation_review = "auto"
+post_implementation_lenses = "heuristic"
+max_auto_review_files = 20
