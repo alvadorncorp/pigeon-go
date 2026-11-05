@@ -1,0 +1,31 @@
+version: "2"
+
+linters:
+  default: none
+  enable: [govet, errcheck, staticcheck, gocyclo, gocognit, gosec,
+           lll, funlen, mnd, gocritic, sloglint]
+  settings:
+    govet:    { enable: [shadow] }
+    gocyclo:  { min-complexity: 15 }
+    gocognit: { min-complexity: 12 }
+    lll:      { line-length: 120 }
+    funlen:   { lines: 80, statements: 40 }
+    mnd:
+      checks: [argument, case, condition, operation]
+      ignored-numbers: ["0", "1", "2"]
+    gocritic: { enabled-tags: [performance, style, diagnostic] }
+    sloglint:
+      static-msg: true
+      context: scope
+      key-naming-case: snake
+      attr-only: true
+  exclusions:
+    generated: disable
+
+formatters:
+  enable: [gofumpt]
+  exclusions:
+    generated: disable
+  settings:
+    gofumpt:
+      extra-rules: true

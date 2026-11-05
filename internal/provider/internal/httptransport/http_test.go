@@ -74,7 +74,7 @@ func TestHTTPBoundsAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -100,7 +100,7 @@ func TestHTTPBoundsAndCancellation(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}

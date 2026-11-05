@@ -9,7 +9,7 @@ import (
 
 func localTestRequest(handler http.Handler, method, path string, destination ...string) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(method, path, nil)
+	request := httptest.NewRequest(method, path, http.NoBody)
 	if len(destination) > 0 {
 		request.Header.Set("Sec-Fetch-Dest", destination[0])
 	}

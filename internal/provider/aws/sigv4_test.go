@@ -63,7 +63,7 @@ func sesVerifyRequest(req *http.Request, body []byte, secret, region, token stri
 func TestSESSignStaticAndSessionCredentials(t *testing.T) {
 	for _, token := range []string{"", "temporary-session-token"} {
 		s := sesSender{region: "us-east-1", accessKey: "AKIDEXAMPLE", secretKey: "test-secret", token: token}
-		req, err := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails", nil)
+		req, err := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails", http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +89,7 @@ func TestSESSignDateChanges(t *testing.T) {
 		time.Date(2024, 1, 2, 23, 59, 59, 0, time.UTC),
 	}
 	signAndVerify := func(now time.Time) error {
-		req, err := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails", nil)
+		req, err := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails", http.NoBody)
 		if err != nil {
 			return err
 		}
@@ -122,7 +122,7 @@ func TestSESSignDateChanges(t *testing.T) {
 
 func BenchmarkSESSign(b *testing.B) {
 	s := sesSender{region: "us-east-1", accessKey: "AKIDEXAMPLE", secretKey: "secret", token: "session-token"}
-	req, err := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails", nil)
+	req, err := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails", http.NoBody)
 	if err != nil {
 		b.Fatal(err)
 	}
