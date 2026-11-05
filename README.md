@@ -167,7 +167,7 @@ go doc -all .
 
 Tests use local HTTP servers and fixed signing fixtures. They cover request formats, error handling, cancellation, local retention, concurrent access, and unsafe HTML previews without sending real email.
 
-The public API lives in the root package. Message values live in `internal/message`; HTTP adapters, SES signing, and the local inbox live in `internal/provider`. Go's `internal` import rule prevents applications from importing the adapter implementations directly. Protocol references and implementation choices are in [the research notes](docs/research.md).
+The public API lives in the root package. Message values live in `internal/message`; HTTP adapters and SES signing live in `internal/provider`. The local inbox lives in `internal/provider/local`, split into message retention, HTTP handling, and embedded assets. Go's `internal` import rule prevents applications from importing the adapter implementations directly. Protocol references and implementation choices are in [the research notes](docs/research.md).
 
 ## License
 
