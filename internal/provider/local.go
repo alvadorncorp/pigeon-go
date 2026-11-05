@@ -20,12 +20,37 @@ const localBudget = 16 << 20
 //go:embed local.html
 var localHTML string
 
+//go:embed local.css
+var localCSS string
+
+//go:embed local.js
+var localJS string
+
+//go:embed local.svg
+var localSVG string
+
 var localTemplate = template.Must(template.New("inbox").Parse(localHTML))
 
 type localMessage struct {
 	ID    string
 	Email message.Email
 	size  int
+}
+
+type localSummary struct {
+	ID      string
+	From    message.Address
+	To      []message.Address
+	Subject string
+}
+
+type localPage struct {
+	Messages []localSummary
+	Selected localMessage
+	Position int
+	Previous string
+	Next     string
+	Format   string
 }
 
 // LocalInbox is a process-local, volatile development inbox. It is safe for
@@ -118,48 +143,50 @@ func localSize(email *message.Email) (int, bool) {
 func (inbox *LocalInbox) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/")
-	if path == "" {
-		inbox.mu.RLock()
-		items := make([]localMessage, inbox.count)
-		for i := range inbox.count {
-			items[i] = inbox.messages[(inbox.start+inbox.count-1-i)%len(inbox.messages)]
+	switch path {
+	case "local.css", "local.js", "local.svg":
+		var content, contentType string
+		switch path {
+		case "local.css":
+			content, contentType = localCSS, "text/css; charset=utf-8"
+		case "local.js":
+			content, contentType = localJS, "text/javascript; charset=utf-8"
+		case "local.svg":
+			content, contentType = localSVG, "image/svg+xml"
 		}
-		inbox.mu.RUnlock()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Type", contentType)
 		if r.Method == http.MethodGet {
-			if err := localTemplate.ExecuteTemplate(w, "list", items); err != nil {
-				return
-			}
+			_, _ = io.WriteString(w, content)
 		}
 		return
 	}
 	id, suffix, hasSuffix := strings.Cut(path, "/")
-	if id == "" || (hasSuffix && suffix != "html") {
-		http.NotFound(w, r)
-		return
-	}
-	inbox.mu.RLock()
-	var item localMessage
-	for i := range inbox.count {
-		candidate := inbox.messages[(inbox.start+i)%len(inbox.messages)]
-		if candidate.ID == id {
-			item = candidate
-			break
-		}
-	}
-	inbox.mu.RUnlock()
-	if item.ID == "" {
+	if hasSuffix && (id == "" || suffix != "html") {
 		http.NotFound(w, r)
 		return
 	}
 	if hasSuffix {
+		inbox.mu.RLock()
+		var item localMessage
+		for i := range inbox.count {
+			candidate := inbox.messages[(inbox.start+i)%len(inbox.messages)]
+			if candidate.ID == id {
+				item = candidate
+				break
+			}
+		}
+		inbox.mu.RUnlock()
+		if item.ID == "" {
+			http.NotFound(w, r)
+			return
+		}
 		// The parent frame policy blocks navigation that sandbox alone permits.
 		if r.Header.Get("Sec-Fetch-Dest") != "iframe" {
 			http.Error(w, "HTML preview requires the inbox iframe", http.StatusForbidden)
@@ -178,10 +205,38 @@ func (inbox *LocalInbox) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	inbox.mu.RLock()
+	page := localPage{Messages: make([]localSummary, inbox.count)}
+	for i := range inbox.count {
+		candidate := inbox.messages[(inbox.start+inbox.count-1-i)%len(inbox.messages)]
+		page.Messages[i] = localSummary{ID: candidate.ID, From: candidate.Email.From, To: candidate.Email.To, Subject: candidate.Email.Subject}
+		if candidate.ID == id || (id == "" && i == 0) {
+			page.Selected = candidate
+			page.Position = i + 1
+		}
+	}
+	inbox.mu.RUnlock()
+	if id != "" && page.Selected.ID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	item := page.Selected
+	if page.Position > 1 {
+		page.Previous = page.Messages[page.Position-2].ID
+	}
+	if page.Position > 0 && page.Position < len(page.Messages) {
+		page.Next = page.Messages[page.Position].ID
+	}
+	if item.Email.HTML != "" {
+		page.Format = "html"
+	} else if item.Email.Text != "" {
+		page.Format = "text"
+	}
+	if requested := r.URL.Query().Get("format"); (requested == "html" && item.Email.HTML != "") || (requested == "text" && item.Email.Text != "") {
+		page.Format = requested
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if r.Method == http.MethodGet {
-		if err := localTemplate.ExecuteTemplate(w, "detail", item); err != nil {
-			return
-		}
+		_ = localTemplate.ExecuteTemplate(w, "inbox", page)
 	}
 }

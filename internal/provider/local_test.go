@@ -117,13 +117,17 @@ func TestLocalHTTPMountAndIsolation(t *testing.T) {
 	}
 	handler := http.StripPrefix("/mail", inbox)
 	list := localTestRequest(handler, http.MethodGet, "/mail/")
-	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `href="`+receipt.ID+`"`) || strings.Contains(list.Body.String(), `<script>`) || strings.Contains(list.Body.String(), `<img src=x`) {
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `href="./`+receipt.ID+`"`) || strings.Contains(list.Body.String(), `<script>`) || strings.Contains(list.Body.String(), `<img src=x`) {
 		t.Fatalf("list escaping or relative link: %d %s", list.Code, list.Body.String())
 	}
-	detail := localTestRequest(handler, http.MethodGet, "/mail/"+receipt.ID)
+	detail := localTestRequest(handler, http.MethodGet, "/mail/"+receipt.ID+"?format=text")
 	body := detail.Body.String()
-	if detail.Code != http.StatusOK || strings.Contains(body, `<script>`) || !strings.Contains(body, `&lt;script&gt;`) || !strings.Contains(body, `sandbox=""`) || !strings.Contains(body, `src="`+receipt.ID+`/html"`) || !strings.Contains(body, `href="./"`) {
+	if detail.Code != http.StatusOK || strings.Contains(body, `<script>`) || !strings.Contains(body, `&lt;script&gt;`) || !strings.Contains(body, receipt.ID) {
 		t.Fatalf("detail escaping or links: %d %s", detail.Code, body)
+	}
+	htmlDetail := localTestRequest(handler, http.MethodGet, "/mail/"+receipt.ID+"?format=html")
+	if !strings.Contains(htmlDetail.Body.String(), `sandbox=""`) || !strings.Contains(htmlDetail.Body.String(), `src="./`+receipt.ID+`/html"`) {
+		t.Fatalf("preview isolation or relative link: %s", htmlDetail.Body.String())
 	}
 	preview := localTestRequest(handler, http.MethodGet, "/mail/"+receipt.ID+"/html", "iframe")
 	if preview.Code != http.StatusOK || preview.Body.String() != email.HTML {
@@ -222,8 +226,153 @@ func TestLocalErrors(t *testing.T) {
 	if _, err := inbox.Send(t.Context(), nil); err == nil {
 		t.Fatal("nil email accepted")
 	}
-	if got := localTestRequest(inbox, http.MethodGet, "/"); !strings.Contains(got.Body.String(), "No messages yet") {
-		t.Fatalf("missing empty state: %s", got.Body.String())
+	empty := localTestRequest(inbox, http.MethodGet, "/")
+	if empty.Code != http.StatusOK || strings.Contains(empty.Body.String(), `<iframe`) {
+		t.Fatalf("empty inbox: status=%d body=%s", empty.Code, empty.Body.String())
+	}
+	if got := localTestRequest(inbox, http.MethodGet, "/1").Code; got != http.StatusNotFound {
+		t.Fatalf("empty inbox detail status = %d, want 404", got)
+	}
+}
+
+func TestLocalInboxSelectionAndNavigation(t *testing.T) {
+	inbox := localTestInbox(t, 2)
+	first := localTestEmail("older subject")
+	first.Text = "older body canary"
+	older, err := inbox.Send(t.Context(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := localTestEmail("newer subject")
+	second.Text = "newer body canary"
+	newer, err := inbox.Send(t.Context(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := http.StripPrefix("/mail", inbox)
+	for _, tc := range []struct {
+		path, selected, other, selectedID string
+	}{
+		{"/mail/", second.Text, first.Text, newer.ID},
+		{"/mail/" + older.ID, first.Text, second.Text, older.ID},
+		{"/mail/" + newer.ID, second.Text, first.Text, newer.ID},
+	} {
+		response := localTestRequest(handler, http.MethodGet, tc.path)
+		body := response.Body.String()
+		if response.Code != http.StatusOK || !strings.Contains(body, tc.selected) || strings.Contains(body, tc.other) {
+			t.Errorf("%s selected wrong body: status=%d body=%s", tc.path, response.Code, body)
+		}
+		if !strings.Contains(body, `href="./`+tc.selectedID+`" aria-current="true"`) {
+			t.Errorf("%s missing selected navigation state", tc.path)
+		}
+		for _, id := range []string{older.ID, newer.ID} {
+			if !strings.Contains(body, `href="./`+id+`"`) {
+				t.Errorf("%s missing relative navigation to %s", tc.path, id)
+			}
+		}
+		if !strings.Contains(body, first.Subject) || !strings.Contains(body, second.Subject) || strings.Index(body, `href="./`+newer.ID+`"`) > strings.LastIndex(body, `href="./`+older.ID+`"`) {
+			t.Errorf("%s missing newest-first inbox: %s", tc.path, body)
+		}
+	}
+	third, err := inbox.Send(t.Context(), localTestEmail("latest subject"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := localTestRequest(handler, http.MethodGet, "/mail/"+older.ID).Code; got != http.StatusNotFound {
+		t.Errorf("evicted selection status = %d, want 404", got)
+	}
+	retained := localTestRequest(handler, http.MethodGet, "/mail/"+newer.ID)
+	if retained.Code != http.StatusOK || !strings.Contains(retained.Body.String(), second.Text) || !strings.Contains(retained.Body.String(), `href="./`+third.ID+`"`) || strings.Contains(retained.Body.String(), first.Subject) {
+		t.Errorf("retained selection after eviction: status=%d body=%s", retained.Code, retained.Body.String())
+	}
+}
+
+func TestLocalOptionalBodyFormats(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, html string
+	}{
+		{"text only", "plain body canary", ""},
+		{"html only", "", "<p>html body canary</p>"},
+		{"both", "plain body canary", "<p>html body canary</p>"},
+		{"neither", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inbox := localTestInbox(t, 1)
+			email := localTestEmail(tc.name)
+			email.Text, email.HTML = tc.text, tc.html
+			receipt, err := inbox.Send(t.Context(), email)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := "/" + receipt.ID
+			if tc.text != "" {
+				response := localTestRequest(inbox, http.MethodGet, base+"?format=text")
+				if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), tc.text) {
+					t.Errorf("text format: status=%d body=%s", response.Code, response.Body.String())
+				}
+				if !strings.Contains(response.Body.String(), `data-format="text" aria-controls="panel-text" aria-selected="true"`) {
+					t.Errorf("text tab not selected: %s", response.Body.String())
+				}
+			}
+			response := localTestRequest(inbox, http.MethodGet, base+"?format=html")
+			preview := localTestRequest(inbox, http.MethodGet, base+"/html", "iframe")
+			if tc.html != "" {
+				if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `sandbox=""`) || !strings.Contains(response.Body.String(), `src="./`+receipt.ID+`/html"`) || strings.Contains(response.Body.String(), tc.html) {
+					t.Errorf("HTML format not isolated: status=%d body=%s", response.Code, response.Body.String())
+				}
+				if !strings.Contains(response.Body.String(), `data-format="html" aria-controls="panel-html" aria-selected="true"`) {
+					t.Errorf("HTML tab not selected: %s", response.Body.String())
+				}
+				if preview.Code != http.StatusOK || preview.Body.String() != tc.html {
+					t.Errorf("HTML preview: status=%d body=%q", preview.Code, preview.Body.String())
+				}
+			} else if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `<iframe`) || preview.Code != http.StatusNotFound {
+				t.Errorf("absent HTML: detail=%d preview=%d body=%s", response.Code, preview.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestLocalStaticAssets(t *testing.T) {
+	handler := http.StripPrefix("/mail", localTestInbox(t, 1))
+	for _, asset := range []struct{ path, contentType string }{
+		{"local.css", "text/css; charset=utf-8"},
+		{"local.js", "text/javascript; charset=utf-8"},
+		{"local.svg", "image/svg+xml"},
+	} {
+		t.Run(asset.path, func(t *testing.T) {
+			path := "/mail/" + asset.path
+			get := localTestRequest(handler, http.MethodGet, path)
+			if get.Code != http.StatusOK || get.Body.Len() == 0 || get.Header().Get("Content-Type") != asset.contentType {
+				t.Errorf("GET: status=%d content-type=%q bytes=%d", get.Code, get.Header().Get("Content-Type"), get.Body.Len())
+			}
+			for _, header := range []struct{ name, value string }{
+				{"Cache-Control", "no-store"},
+				{"X-Content-Type-Options", "nosniff"},
+			} {
+				if got := get.Header().Get(header.name); got != header.value {
+					t.Errorf("%s = %q, want %q", header.name, got, header.value)
+				}
+			}
+			for _, directive := range []string{"default-src 'none'", "script-src 'self'", "frame-ancestors 'none'"} {
+				if !strings.Contains(get.Header().Get("Content-Security-Policy"), directive) {
+					t.Errorf("CSP missing %q: %q", directive, get.Header().Get("Content-Security-Policy"))
+				}
+			}
+			head := localTestRequest(handler, http.MethodHead, path)
+			if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Type") != asset.contentType {
+				t.Errorf("HEAD: status=%d content-type=%q bytes=%d", head.Code, head.Header().Get("Content-Type"), head.Body.Len())
+			}
+			post := localTestRequest(handler, http.MethodPost, path)
+			if post.Code != http.StatusMethodNotAllowed || post.Header().Get("Allow") != "GET, HEAD" {
+				t.Errorf("POST: status=%d allow=%q", post.Code, post.Header().Get("Allow"))
+			}
+		})
+	}
+	for _, path := range []string{"/mail/missing.css", "/mail/local.css/extra", "/mail/assets/local.css"} {
+		if got := localTestRequest(handler, http.MethodGet, path).Code; got != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", path, got)
+		}
 	}
 }
 
