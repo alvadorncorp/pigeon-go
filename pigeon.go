@@ -8,7 +8,11 @@ import (
 
 	"go.alvadorn.org/pigeon/internal/message"
 	"go.alvadorn.org/pigeon/internal/provider"
+	"go.alvadorn.org/pigeon/internal/provider/aws"
 	"go.alvadorn.org/pigeon/internal/provider/local"
+	"go.alvadorn.org/pigeon/internal/provider/mailgun"
+	"go.alvadorn.org/pigeon/internal/provider/resend"
+	"go.alvadorn.org/pigeon/internal/provider/sendgrid"
 )
 
 // Address is an addr-spec and optional display name.
@@ -58,13 +62,13 @@ func New(config Config) (*Mailer, error) {
 	var err error
 	switch config.Provider {
 	case ProviderSES:
-		backend, err = provider.NewSES(config)
+		backend, err = aws.NewSES(config)
 	case ProviderResend:
-		backend, err = provider.NewResend(config)
+		backend, err = resend.New(config)
 	case ProviderMailgun:
-		backend, err = provider.NewMailgun(config)
+		backend, err = mailgun.New(config)
 	case ProviderSendGrid:
-		backend, err = provider.NewSendGrid(config)
+		backend, err = sendgrid.New(config)
 	case ProviderLocal:
 		inbox, err := local.New(config)
 		if err != nil {

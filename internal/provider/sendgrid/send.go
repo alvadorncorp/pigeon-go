@@ -1,4 +1,4 @@
-package provider
+package sendgrid
 
 import (
 	"bytes"
@@ -9,23 +9,6 @@ import (
 
 	"go.alvadorn.org/pigeon/internal/message"
 )
-
-type sendGridSender struct {
-	httpSender
-	apiKey string
-}
-
-// NewSendGrid constructs a SendGrid sender using the configured API key and HTTP client.
-func NewSendGrid(config Config) (*sendGridSender, error) {
-	if err := requireAPIKey(config.APIKey); err != nil {
-		return nil, err
-	}
-	h, err := newHTTPSender(config, "https://api.sendgrid.com")
-	if err != nil {
-		return nil, err
-	}
-	return &sendGridSender{httpSender: h, apiKey: config.APIKey}, nil
-}
 
 type sendGridPersonalization struct {
 	To  []message.Address `json:"to"`
@@ -66,13 +49,13 @@ func (s *sendGridSender) Send(ctx context.Context, email *message.Email) (messag
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("encode sendgrid message: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/v3/mail/send", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.http.BaseURL()+"/v3/mail/send", bytes.NewReader(body))
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("create sendgrid request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	_, headers, err := s.do(req)
+	_, headers, err := s.http.Do(req)
 	if err != nil {
 		return message.Receipt{}, err
 	}

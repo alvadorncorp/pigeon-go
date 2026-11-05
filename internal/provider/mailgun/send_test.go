@@ -1,4 +1,4 @@
-package provider
+package mailgun
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"go.alvadorn.org/pigeon/internal/message"
+	"go.alvadorn.org/pigeon/internal/provider"
 )
 
 func mailgunTestEmail() *message.Email {
@@ -59,7 +60,7 @@ func TestMailgunMultipartRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender, err := NewMailgun(Config{APIKey: "secret:key", Domain: "mg.example.com", BaseURL: server.URL})
+	sender, err := New(provider.Config{APIKey: "secret:key", Domain: "mg.example.com", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,12 +77,12 @@ func TestMailgunMultipartRequest(t *testing.T) {
 func TestMailgunInvalidConfiguration(t *testing.T) {
 	for _, domain := range []string{"", ".example.com", "example.com.", "example..com", "-bad.example", "bad-.example", "example.com/other", "example.com?x=y", "example.com:443", "é.example", strings.Repeat("a", 64) + ".example"} {
 		t.Run(domain, func(t *testing.T) {
-			if _, err := NewMailgun(Config{APIKey: "key", Domain: domain}); err == nil {
+			if _, err := New(provider.Config{APIKey: "key", Domain: domain}); err == nil {
 				t.Fatalf("accepted invalid domain %q", domain)
 			}
 		})
 	}
-	if _, err := NewMailgun(Config{Domain: "example.com"}); err == nil {
+	if _, err := New(provider.Config{Domain: "example.com"}); err == nil {
 		t.Error("accepted empty API key")
 	}
 }
@@ -109,7 +110,7 @@ func TestMailgunResponseErrors(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			sender, err := NewMailgun(Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
+			sender, err := New(provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -129,7 +130,7 @@ func TestMailgunResponseErrors(t *testing.T) {
 }
 
 func TestMailgunCancellation(t *testing.T) {
-	sender, err := NewMailgun(Config{APIKey: "key", Domain: "example.com"})
+	sender, err := New(provider.Config{APIKey: "key", Domain: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func BenchmarkMailgunSend(b *testing.B) {
 		}
 	}))
 	defer server.Close()
-	sender, err := NewMailgun(Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
+	sender, err := New(provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
 	if err != nil {
 		b.Fatal(err)
 	}

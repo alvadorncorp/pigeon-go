@@ -1,4 +1,4 @@
-package provider
+package resend
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"go.alvadorn.org/pigeon/internal/message"
+	"go.alvadorn.org/pigeon/internal/provider"
 )
 
 func TestResendSendRequest(t *testing.T) {
@@ -65,7 +66,7 @@ func TestResendSendRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender, err := NewResend(Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestResendOmitsOptionalFields(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	sender, err := NewResend(Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestResendErrors(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			sender, err := NewResend(Config{APIKey: "test-key", BaseURL: server.URL})
+			sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -160,8 +161,8 @@ func TestResendErrors(t *testing.T) {
 			}
 		})
 	}
-	if _, err := NewResend(Config{}); err == nil {
-		t.Error("NewResend with no API key succeeded")
+	if _, err := New(provider.Config{}); err == nil {
+		t.Error("New with no API key succeeded")
 	}
 }
 
@@ -170,7 +171,7 @@ func TestResendCanceledContext(t *testing.T) {
 		t.Error("canceled request reached server")
 	}))
 	defer server.Close()
-	sender, err := NewResend(Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func BenchmarkResendSend(b *testing.B) {
 		}
 	}))
 	defer server.Close()
-	sender, err := NewResend(Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		b.Fatal(err)
 	}

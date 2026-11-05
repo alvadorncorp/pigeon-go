@@ -1,4 +1,4 @@
-package provider
+package aws
 
 import (
 	"bytes"
@@ -7,52 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
 
 	"go.alvadorn.org/pigeon/internal/message"
 )
-
-type sesSender struct {
-	httpSender
-	region, accessKey, secretKey, token string
-	signingMu                           sync.Mutex
-	signingDate                         string
-	signingKey                          []byte
-}
-
-// NewSES constructs an SES v2 sender using a fixed snapshot of AWS credentials.
-// Credentials are not discovered or refreshed automatically.
-func NewSES(config Config) (*sesSender, error) {
-	if !validSESRegion(config.Region) {
-		return nil, errors.New("ses: invalid region")
-	}
-	if config.AccessKeyID == "" || config.SecretAccessKey == "" || strings.ContainsAny(config.AccessKeyID, " \t\r\n/,=") || strings.ContainsAny(config.SessionToken, "\r\n") {
-		return nil, errors.New("ses: invalid credentials")
-	}
-	suffix := "amazonaws.com"
-	if strings.HasPrefix(config.Region, "cn-") {
-		suffix = "amazonaws.com.cn"
-	}
-	h, err := newHTTPSender(config, "https://email."+config.Region+"."+suffix)
-	if err != nil {
-		return nil, err
-	}
-	return &sesSender{httpSender: h, region: config.Region, accessKey: config.AccessKeyID, secretKey: config.SecretAccessKey, token: config.SessionToken}, nil
-}
-
-func validSESRegion(region string) bool {
-	if len(region) == 0 || len(region) > 63 || region[0] == '-' || region[len(region)-1] == '-' {
-		return false
-	}
-	for _, c := range region {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-			return false
-		}
-	}
-	return true
-}
 
 type sesText struct {
 	Data    string `json:"Data"`
@@ -99,13 +57,13 @@ func (s *sesSender) Send(ctx context.Context, email *message.Email) (message.Rec
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("ses: encode email: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/v2/email/outbound-emails", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.http.BaseURL()+"/v2/email/outbound-emails", bytes.NewReader(body))
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("ses: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	s.sign(req, body, time.Now())
-	response, _, err := s.do(req)
+	response, _, err := s.http.Do(req)
 	if err != nil {
 		return message.Receipt{}, err
 	}

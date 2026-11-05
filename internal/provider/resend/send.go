@@ -1,4 +1,4 @@
-package provider
+package resend
 
 import (
 	"bytes"
@@ -9,23 +9,6 @@ import (
 
 	"go.alvadorn.org/pigeon/internal/message"
 )
-
-type resendSender struct {
-	http   httpSender
-	apiKey string
-}
-
-// NewResend constructs a Resend sender using the configured API key and HTTP client.
-func NewResend(config Config) (*resendSender, error) {
-	if err := requireAPIKey(config.APIKey); err != nil {
-		return nil, err
-	}
-	h, err := newHTTPSender(config, "https://api.resend.com")
-	if err != nil {
-		return nil, err
-	}
-	return &resendSender{http: h, apiKey: config.APIKey}, nil
-}
 
 type resendEmail struct {
 	From    string   `json:"from"`
@@ -56,13 +39,13 @@ func (s *resendSender) Send(ctx context.Context, email *message.Email) (message.
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("resend: encode email: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.http.baseURL+"/emails", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.http.BaseURL()+"/emails", bytes.NewReader(body))
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("resend: create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	response, _, err := s.http.do(req)
+	response, _, err := s.http.Do(req)
 	if err != nil {
 		return message.Receipt{}, err
 	}

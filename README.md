@@ -167,7 +167,7 @@ go doc -all .
 
 Tests use local HTTP servers and fixed signing fixtures. They cover request formats, error handling, cancellation, local retention, concurrent access, and unsafe HTML previews without sending real email.
 
-The public API lives in the root package. Message values live in `internal/message`; HTTP adapters and SES signing live in `internal/provider`. The local inbox lives in `internal/provider/local`, split into message retention, HTTP handling, and embedded assets. Go's `internal` import rule prevents applications from importing the adapter implementations directly. Protocol references and implementation choices are in [the research notes](docs/research.md).
+The public API lives in the root package. Message values live in `internal/message`; `internal/provider` defines the shared configuration. Each adapter has its own package under `internal/provider`: `aws` (SES and SigV4 signing), `resend`, `mailgun`, `sendgrid`, and `local`. Cloud adapters separate client construction from sending; the local inbox separates message retention, HTTP handling, and embedded assets. Shared HTTP policy and error handling live in `internal/provider/internal/httptransport`, which only the provider tree can import. Go's `internal` import rule prevents applications from importing the adapter implementations directly. Protocol references and implementation choices are in [the research notes](docs/research.md).
 
 ## License
 

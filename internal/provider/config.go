@@ -1,4 +1,4 @@
-// Package provider implements delivery adapters. Applications use package pigeon.
+// Package provider defines the shared delivery configuration. Applications use package pigeon.
 package provider
 
 import "net/http"

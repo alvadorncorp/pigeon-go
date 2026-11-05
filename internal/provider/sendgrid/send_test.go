@@ -1,4 +1,4 @@
-package provider
+package sendgrid
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"go.alvadorn.org/pigeon/internal/message"
+	"go.alvadorn.org/pigeon/internal/provider"
 )
 
 func TestSendGridPayload(t *testing.T) {
@@ -46,7 +47,7 @@ func TestSendGridPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender, err := NewSendGrid(Config{Provider: SendGrid, APIKey: "secret-key", BaseURL: server.URL})
+	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "secret-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestSendGridOptionalFieldsAndEmptyReceipt(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
-	sender, err := NewSendGrid(Config{Provider: SendGrid, APIKey: "key", BaseURL: server.URL})
+	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestSendGridOptionalFieldsAndEmptyReceipt(t *testing.T) {
 }
 
 func TestSendGridErrors(t *testing.T) {
-	if _, err := NewSendGrid(Config{}); err == nil {
+	if _, err := New(provider.Config{}); err == nil {
 		t.Error("missing API key accepted")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +122,7 @@ func TestSendGridErrors(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	sender, err := NewSendGrid(Config{Provider: SendGrid, APIKey: "key", BaseURL: server.URL})
+	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func BenchmarkSendGrid(b *testing.B) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
-	sender, err := NewSendGrid(Config{Provider: SendGrid, APIKey: "key", BaseURL: server.URL})
+	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
 	if err != nil {
 		b.Fatal(err)
 	}

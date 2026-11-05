@@ -1,4 +1,4 @@
-package provider
+package aws
 
 import (
 	"context"
@@ -14,10 +14,11 @@ import (
 	"testing"
 
 	"go.alvadorn.org/pigeon/internal/message"
+	"go.alvadorn.org/pigeon/internal/provider"
 )
 
-func sesTestConfig(url string) Config {
-	return Config{Provider: SES, BaseURL: url, Region: "us-east-1", AccessKeyID: "AKIDEXAMPLE", SecretAccessKey: "test-secret", SessionToken: "session-token"}
+func sesTestConfig(url string) provider.Config {
+	return provider.Config{Provider: provider.SES, BaseURL: url, Region: "us-east-1", AccessKeyID: "AKIDEXAMPLE", SecretAccessKey: "test-secret", SessionToken: "session-token"}
 }
 
 func TestSESSendProtocol(t *testing.T) {
@@ -167,8 +168,8 @@ func TestSESConfig(t *testing.T) {
 		if strings.HasPrefix(region, "cn-") {
 			want += ".cn"
 		}
-		if s.baseURL != want {
-			t.Errorf("endpoint = %q, want %q", s.baseURL, want)
+		if s.http.BaseURL() != want {
+			t.Errorf("endpoint = %q, want %q", s.http.BaseURL(), want)
 		}
 	}
 	config := sesTestConfig("")

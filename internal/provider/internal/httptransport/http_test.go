@@ -1,4 +1,4 @@
-package provider
+package httptransport
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"go.alvadorn.org/pigeon/internal/message"
+	"go.alvadorn.org/pigeon/internal/provider"
 )
 
 func TestHTTPRejectsRedirectWithoutLeakingMessage(t *testing.T) {
@@ -26,7 +27,7 @@ func TestHTTPRejectsRedirectWithoutLeakingMessage(t *testing.T) {
 	}))
 	defer origin.Close()
 	original := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { t.Error("caller redirect policy was used"); return nil }}
-	h, err := newHTTPSender(Config{Provider: Resend, BaseURL: origin.URL, HTTPClient: original}, "")
+	h, err := New(provider.Config{Provider: provider.Resend, BaseURL: origin.URL, HTTPClient: original}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func TestHTTPRejectsRedirectWithoutLeakingMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer secret")
-	_, _, err = h.do(req)
+	_, _, err = h.Do(req)
 	delivery, ok := errors.AsType[*message.DeliveryError](err)
 	if !ok || delivery.StatusCode != http.StatusTemporaryRedirect {
 		t.Fatalf("error = %v", err)
@@ -52,7 +53,7 @@ func TestHTTPErrorDiagnosticsDoNotLeakThroughError(t *testing.T) {
 		`<html>upstream failed</html>`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			e := responseError(SendGrid, 429, []byte(body))
+			e := responseError(provider.SendGrid, 429, []byte(body))
 			if e.StatusCode != 429 || strings.Contains(e.Error(), "private") || strings.Contains(e.Error(), "secret") {
 				t.Fatalf("unsafe error: %v", e)
 			}
@@ -69,7 +70,7 @@ func TestHTTPBoundsAndCancellation(t *testing.T) {
 			_, _ = io.WriteString(w, strings.Repeat("x", maxResponseBytes+1))
 		}))
 		defer server.Close()
-		h, err := newHTTPSender(Config{Provider: Resend, BaseURL: server.URL}, "")
+		h, err := New(provider.Config{Provider: provider.Resend, BaseURL: server.URL}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -77,7 +78,7 @@ func TestHTTPBoundsAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := h.do(req); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		if _, _, err := h.Do(req); err == nil || !strings.Contains(err.Error(), "exceeds") {
 			t.Fatalf("error = %v", err)
 		}
 	})
@@ -93,7 +94,7 @@ func TestHTTPBoundsAndCancellation(t *testing.T) {
 		}))
 		defer server.Close()
 		defer close(release)
-		h, err := newHTTPSender(Config{Provider: Resend, BaseURL: server.URL}, "")
+		h, err := New(provider.Config{Provider: provider.Resend, BaseURL: server.URL}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +105,7 @@ func TestHTTPBoundsAndCancellation(t *testing.T) {
 			t.Fatal(err)
 		}
 		done := make(chan error, 1)
-		go func() { _, _, err := h.do(req); done <- err }()
+		go func() { _, _, err := h.Do(req); done <- err }()
 		<-entered
 		cancel()
 		if err := <-done; !errors.Is(err, context.Canceled) {
@@ -115,7 +116,7 @@ func TestHTTPBoundsAndCancellation(t *testing.T) {
 
 func TestHTTPRejectsUnsafeOrigins(t *testing.T) {
 	for _, origin := range []string{"http://example.com", "http://localhost", "https://key@example.com", "https://example.com/path", "https://example.com?key=secret", "https://example.com#fragment", "file:///tmp/mail", "https:///missing"} {
-		if _, err := newHTTPSender(Config{BaseURL: origin}, ""); err == nil {
+		if _, err := New(provider.Config{BaseURL: origin}, ""); err == nil {
 			t.Errorf("accepted unsafe origin %q", origin)
 		}
 	}
