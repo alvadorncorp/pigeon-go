@@ -11,7 +11,7 @@ type resendSender struct {
 }
 
 // New constructs a Resend sender using the configured API key and HTTP client.
-func New(config provider.Config) (*resendSender, error) {
+func New(config *provider.Config) (*resendSender, error) {
 	if err := httptransport.RequireAPIKey(config.APIKey); err != nil {
 		return nil, err
 	}

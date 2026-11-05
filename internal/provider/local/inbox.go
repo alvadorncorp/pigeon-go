@@ -31,7 +31,7 @@ type LocalInbox struct {
 // New creates a bounded development inbox. A zero capacity defaults to
 // 100 messages; a negative capacity is invalid. Retained content is also
 // limited to 16 MiB, with the oldest messages evicted first.
-func New(cfg provider.Config) (*LocalInbox, error) {
+func New(cfg *provider.Config) (*LocalInbox, error) {
 	capacity := cfg.LocalCapacity
 	if capacity < 0 {
 		return nil, fmt.Errorf("local capacity must not be negative")

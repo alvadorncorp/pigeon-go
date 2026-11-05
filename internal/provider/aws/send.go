@@ -57,7 +57,9 @@ func (s *sesSender) Send(ctx context.Context, email *message.Email) (message.Rec
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("ses: encode email: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.http.BaseURL()+"/v2/email/outbound-emails", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, s.http.BaseURL()+"/v2/email/outbound-emails", bytes.NewReader(body),
+	)
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("ses: create request: %w", err)
 	}

@@ -11,7 +11,7 @@ type sendGridSender struct {
 }
 
 // New constructs a SendGrid sender using the configured API key and HTTP client.
-func New(config provider.Config) (*sendGridSender, error) {
+func New(config *provider.Config) (*sendGridSender, error) {
 	if err := httptransport.RequireAPIKey(config.APIKey); err != nil {
 		return nil, err
 	}

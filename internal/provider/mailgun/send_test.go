@@ -28,39 +28,11 @@ func mailgunTestEmail() *message.Email {
 
 func TestMailgunMultipartRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v3/mg.example.com/messages" {
-			t.Errorf("request = %s %s", r.Method, r.URL.Path)
-		}
-		user, password, ok := r.BasicAuth()
-		if !ok || user != "api" || password != "secret:key" {
-			t.Error("incorrect basic authentication")
-		}
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Errorf("parse multipart: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if err := r.MultipartForm.RemoveAll(); err != nil {
-			t.Errorf("remove multipart temporary files: %v", err)
-		}
-		want := map[string][]string{
-			"from": {"\"Sender\" <sender@example.com>"},
-			"to":   {"\"Doe, Jane\" <jane@example.com>", "other@example.com"},
-			"cc":   {"cc@example.com"}, "bcc": {"bcc@example.com"},
-			"h:Reply-To": {"reply@example.com"}, "subject": {"Olá 世界"},
-			"text": {"Olá\r\n世界\r\n"}, "html": {"<p>Olá\r\n世界</p>"},
-		}
-		if !reflect.DeepEqual(r.MultipartForm.Value, want) {
-			t.Errorf("multipart fields = %#v, want %#v", r.MultipartForm.Value, want)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := io.WriteString(w, `{"id":"<mailgun-id@example.com>","message":"Queued"}`); err != nil {
-			t.Errorf("write response: %v", err)
-		}
+		checkMailgunMultipartRequest(t, w, r)
 	}))
 	defer server.Close()
 
-	sender, err := New(provider.Config{APIKey: "secret:key", Domain: "mg.example.com", BaseURL: server.URL})
+	sender, err := New(&provider.Config{APIKey: "secret:key", Domain: "mg.example.com", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,15 +46,77 @@ func TestMailgunMultipartRequest(t *testing.T) {
 	}
 }
 
+func checkMailgunMultipartRequest(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	if r.Method != http.MethodPost || r.URL.Path != "/v3/mg.example.com/messages" {
+		t.Errorf("request = %s %s", r.Method, r.URL.Path)
+	}
+	user, password, ok := r.BasicAuth()
+	if !ok || user != "api" || password != "secret:key" {
+		t.Error("incorrect basic authentication")
+	}
+	fields, parseErr := readMailgunMultipart(w, r)
+	if parseErr != nil {
+		t.Errorf("parse multipart: %v", parseErr)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	want := map[string][]string{
+		"from": {"\"Sender\" <sender@example.com>"},
+		"to":   {"\"Doe, Jane\" <jane@example.com>", "other@example.com"},
+		"cc":   {"cc@example.com"}, "bcc": {"bcc@example.com"},
+		"h:Reply-To": {"reply@example.com"}, "subject": {"Olá 世界"},
+		"text": {"Olá\r\n世界\r\n"}, "html": {"<p>Olá\r\n世界</p>"},
+	}
+	if !reflect.DeepEqual(fields, want) {
+		t.Errorf("multipart fields = %#v, want %#v", fields, want)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := io.WriteString(w, `{"id":"<mailgun-id@example.com>","message":"Queued"}`); err != nil {
+		t.Errorf("write response: %v", err)
+	}
+}
+
+func readMailgunMultipart(w http.ResponseWriter, r *http.Request) (map[string][]string, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return nil, err
+	}
+	fields := make(map[string][]string)
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			return fields, nil
+		}
+		if nextErr != nil {
+			return nil, nextErr
+		}
+		value, readErr := io.ReadAll(part)
+		closeErr := part.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		fields[part.FormName()] = append(fields[part.FormName()], string(value))
+	}
+}
+
 func TestMailgunInvalidConfiguration(t *testing.T) {
-	for _, domain := range []string{"", ".example.com", "example.com.", "example..com", "-bad.example", "bad-.example", "example.com/other", "example.com?x=y", "example.com:443", "é.example", strings.Repeat("a", 64) + ".example"} {
+	for _, domain := range []string{
+		"", ".example.com", "example.com.", "example..com", "-bad.example", "bad-.example",
+		"example.com/other", "example.com?x=y", "example.com:443", "é.example",
+		strings.Repeat("a", 64) + ".example",
+	} {
 		t.Run(domain, func(t *testing.T) {
-			if _, err := New(provider.Config{APIKey: "key", Domain: domain}); err == nil {
+			if _, err := New(&provider.Config{APIKey: "key", Domain: domain}); err == nil {
 				t.Fatalf("accepted invalid domain %q", domain)
 			}
 		})
 	}
-	if _, err := New(provider.Config{Domain: "example.com"}); err == nil {
+	if _, err := New(&provider.Config{Domain: "example.com"}); err == nil {
 		t.Error("accepted empty API key")
 	}
 }
@@ -110,27 +144,32 @@ func TestMailgunResponseErrors(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			sender, err := New(provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
+			sender, err := New(&provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
 			_, err = sender.Send(context.Background(), mailgunTestEmail())
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			delivery, ok := errors.AsType[*message.DeliveryError](err)
-			if ok != tc.delivery {
-				t.Fatalf("delivery error = %v, want %v: %v", ok, tc.delivery, err)
-			}
-			if ok && delivery.StatusCode != tc.status {
-				t.Errorf("status = %d, want %d", delivery.StatusCode, tc.status)
-			}
+			checkMailgunResponseError(t, err, tc.delivery, tc.status)
 		})
 	}
 }
 
+func checkMailgunResponseError(t *testing.T, err error, wantDelivery bool, status int) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	delivery, ok := errors.AsType[*message.DeliveryError](err)
+	if ok != wantDelivery {
+		t.Fatalf("delivery error = %v, want %v: %v", ok, wantDelivery, err)
+	}
+	if ok && delivery.StatusCode != status {
+		t.Errorf("status = %d, want %d", delivery.StatusCode, status)
+	}
+}
+
 func TestMailgunCancellation(t *testing.T) {
-	sender, err := New(provider.Config{APIKey: "key", Domain: "example.com"})
+	sender, err := New(&provider.Config{APIKey: "key", Domain: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +192,7 @@ func BenchmarkMailgunSend(b *testing.B) {
 		}
 	}))
 	defer server.Close()
-	sender, err := New(provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
+	sender, err := New(&provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -2,10 +2,12 @@
 // message-building code. It supports Amazon SES, Resend, Mailgun, Twilio SendGrid,
 // and a local development inbox using only the Go standard library.
 //
-// Create a Mailer once with New, then share it across goroutines. Build messages
-// with Email and Address values and submit them with Mailer.Send. A successful
-// Receipt means the provider accepted the submission, not that it was delivered.
-// Pigeon does not queue, retry, refresh credentials, or track delivery events.
+// Create a Mailer once with New and a non-nil *Config, then share it across
+// goroutines. New reads and snapshots the configuration synchronously; later
+// changes to the Config do not reconfigure the Mailer. Build messages with Email
+// and Address values and submit them with Mailer.Send. A successful Receipt means
+// the provider accepted the submission, not that it was delivered. Pigeon does not
+// queue, retry, refresh credentials, or track delivery events.
 //
 // The portable message contract requires an ASCII From address, at least one To
 // recipient, a nonempty subject, and a text or HTML body. Up to 50 recipients

@@ -12,7 +12,15 @@ import (
 	"go.alvadorn.org/pigeon"
 )
 
+const sendTimeout = 10 * time.Second
+
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	kind := pigeon.Provider(os.Getenv("PIGEON_PROVIDER"))
 	if kind == "" {
 		kind = pigeon.ProviderLocal
@@ -26,9 +34,9 @@ func main() {
 			to = "reader@example.com"
 		}
 	} else if from == "" || to == "" {
-		log.Fatal("set PIGEON_FROM and PIGEON_TO before sending through a cloud provider")
+		return fmt.Errorf("set PIGEON_FROM and PIGEON_TO before sending through a cloud provider")
 	}
-	mailer, err := pigeon.New(pigeon.Config{
+	mailer, err := pigeon.New(&pigeon.Config{
 		Provider:        kind,
 		APIKey:          os.Getenv("PIGEON_API_KEY"),
 		Domain:          os.Getenv("PIGEON_DOMAIN"),
@@ -39,9 +47,9 @@ func main() {
 		BaseURL:         os.Getenv("PIGEON_BASE_URL"),
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 	receipt, err := mailer.Send(ctx, &pigeon.Email{
 		From:    pigeon.Address{Name: "Pigeon", Email: from},
@@ -51,7 +59,8 @@ func main() {
 		HTML:    "<p>The same message works with every configured provider.</p>",
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Printf("Accepted by %s: %s\n", kind, receipt.ID)
+	return nil
 }

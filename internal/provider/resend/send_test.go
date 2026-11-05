@@ -17,47 +17,8 @@ import (
 
 func TestResendSendRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/emails" {
-			t.Errorf("request = %s %s", r.Method, r.URL.Path)
-		}
-		for key, want := range map[string]string{
-			"Authorization": "Bearer test-key",
-			"Content-Type":  "application/json",
-			"Accept":        "application/json",
-		} {
-			if got := r.Header.Get(key); got != want {
-				t.Errorf("%s = %q, want %q", key, got, want)
-			}
-		}
-		if r.Header.Get("User-Agent") == "" {
-			t.Error("missing User-Agent")
-		}
-		var payload map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Errorf("decode request: %v", err)
+		if !checkResendRequest(t, r) {
 			return
-		}
-		for key, want := range map[string]string{"subject": "Hello", "text": "Plain", "html": "<p>HTML</p>"} {
-			if got := payload[key]; got != want {
-				t.Errorf("%s = %v, want %q", key, got, want)
-			}
-		}
-		resendCheckAddress(t, payload["from"], "Doe, Jane", "from@example.com")
-		resendCheckAddress(t, payload["reply_to"], "Réponse, Élodie", "reply@example.com")
-		for key, want := range map[string][2]string{
-			"to":  {"José, Silva", "to@example.com"},
-			"cc":  {"Copy", "cc@example.com"},
-			"bcc": {"Blind", "bcc@example.com"},
-		} {
-			items, ok := payload[key].([]any)
-			if !ok || len(items) != 1 {
-				t.Errorf("%s = %#v, want one address", key, payload[key])
-				continue
-			}
-			resendCheckAddress(t, items[0], want[0], want[1])
-		}
-		if len(payload) != 8 {
-			t.Errorf("unexpected payload fields: %#v", payload)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if _, err := w.Write([]byte(`{"id":"accepted-123"}`)); err != nil {
@@ -66,7 +27,7 @@ func TestResendSendRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +41,58 @@ func TestResendSendRequest(t *testing.T) {
 	})
 	if err != nil || receipt.ID != "accepted-123" {
 		t.Fatalf("Send = %#v, %v", receipt, err)
+	}
+}
+
+func checkResendRequest(t *testing.T, r *http.Request) bool {
+	t.Helper()
+	if r.Method != http.MethodPost || r.URL.Path != "/emails" {
+		t.Errorf("request = %s %s", r.Method, r.URL.Path)
+	}
+	for key, want := range map[string]string{
+		"Authorization": "Bearer test-key",
+		"Content-Type":  "application/json",
+		"Accept":        "application/json",
+	} {
+		if got := r.Header.Get(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if r.Header.Get("User-Agent") == "" {
+		t.Error("missing User-Agent")
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		t.Errorf("decode request: %v", err)
+		return false
+	}
+	checkResendPayload(t, payload)
+	return true
+}
+
+func checkResendPayload(t *testing.T, payload map[string]any) {
+	t.Helper()
+	for key, want := range map[string]string{"subject": "Hello", "text": "Plain", "html": "<p>HTML</p>"} {
+		if got := payload[key]; got != want {
+			t.Errorf("%s = %v, want %q", key, got, want)
+		}
+	}
+	resendCheckAddress(t, payload["from"], "Doe, Jane", "from@example.com")
+	resendCheckAddress(t, payload["reply_to"], "Réponse, Élodie", "reply@example.com")
+	for key, want := range map[string][2]string{
+		"to":  {"José, Silva", "to@example.com"},
+		"cc":  {"Copy", "cc@example.com"},
+		"bcc": {"Blind", "bcc@example.com"},
+	} {
+		items, ok := payload[key].([]any)
+		if !ok || len(items) != 1 {
+			t.Errorf("%s = %#v, want one address", key, payload[key])
+			continue
+		}
+		resendCheckAddress(t, items[0], want[0], want[1])
+	}
+	if len(payload) != 8 {
+		t.Errorf("unexpected payload fields: %#v", payload)
 	}
 }
 
@@ -107,7 +120,9 @@ func TestResendOmitsOptionalFields(t *testing.T) {
 			t.Errorf("decode request: %v", err)
 			return
 		}
-		want := map[string]any{"from": "from@example.com", "to": []any{"to@example.com"}, "subject": "Subject", "text": "Body"}
+		want := map[string]any{
+			"from": "from@example.com", "to": []any{"to@example.com"}, "subject": "Subject", "text": "Body",
+		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("payload = %#v, want %#v", got, want)
 		}
@@ -116,11 +131,14 @@ func TestResendOmitsOptionalFields(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = sender.Send(t.Context(), &message.Email{From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}}, Subject: "Subject", Text: "Body"})
+	_, err = sender.Send(t.Context(), &message.Email{
+		From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+		Subject: "Subject", Text: "Body",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,31 +156,39 @@ func TestResendErrors(t *testing.T) {
 		{"rejected", http.StatusUnauthorized, `{"message":"invalid key"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tc.status)
-				if _, err := fmt.Fprint(w, tc.body); err != nil {
-					t.Errorf("write response: %v", err)
-				}
-			}))
-			defer server.Close()
-			sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
-			if err != nil {
-				t.Fatal(err)
-			}
-			receipt, err := sender.Send(t.Context(), &message.Email{From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}}, Subject: "Subject", Text: "Body"})
-			if err == nil || receipt.ID != "" {
-				t.Fatalf("Send = %#v, %v, want error and empty ID", receipt, err)
-			}
-			if tc.status != http.StatusOK {
-				var deliveryErr *message.DeliveryError
-				if !errors.As(err, &deliveryErr) || deliveryErr.StatusCode != tc.status {
-					t.Errorf("error = %v, want DeliveryError status %d", err, tc.status)
-				}
-			}
+			checkResendError(t, tc.status, tc.body)
 		})
 	}
-	if _, err := New(provider.Config{}); err == nil {
+	if _, err := New(&provider.Config{}); err == nil {
 		t.Error("New with no API key succeeded")
+	}
+}
+
+func checkResendError(t *testing.T, status int, body string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		if _, err := fmt.Fprint(w, body); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	sender, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := sender.Send(t.Context(), &message.Email{
+		From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+		Subject: "Subject", Text: "Body",
+	})
+	if err == nil || receipt.ID != "" {
+		t.Fatalf("Send = %#v, %v, want error and empty ID", receipt, err)
+	}
+	if status != http.StatusOK {
+		var deliveryErr *message.DeliveryError
+		if !errors.As(err, &deliveryErr) || deliveryErr.StatusCode != status {
+			t.Errorf("error = %v, want DeliveryError status %d", err, status)
+		}
 	}
 }
 
@@ -171,13 +197,16 @@ func TestResendCanceledContext(t *testing.T) {
 		t.Error("canceled request reached server")
 	}))
 	defer server.Close()
-	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = sender.Send(ctx, &message.Email{From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}}, Subject: "Subject", Text: "Body"})
+	_, err = sender.Send(ctx, &message.Email{
+		From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+		Subject: "Subject", Text: "Body",
+	})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error = %v, want context canceled", err)
 	}
@@ -190,11 +219,14 @@ func BenchmarkResendSend(b *testing.B) {
 		}
 	}))
 	defer server.Close()
-	sender, err := New(provider.Config{APIKey: "test-key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL})
 	if err != nil {
 		b.Fatal(err)
 	}
-	email := &message.Email{From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}}, Subject: "Subject", Text: "Body"}
+	email := &message.Email{
+		From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+		Subject: "Subject", Text: "Body",
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {

@@ -48,10 +48,12 @@ func (s *sesSender) sign(req *http.Request, body []byte, now time.Time) {
 		signedHeaders += ";x-amz-security-token"
 	}
 	payloadHash := sha256.Sum256(body)
-	canonical := req.Method + "\n" + req.URL.EscapedPath() + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + hex.EncodeToString(payloadHash[:])
+	canonical := req.Method + "\n" + req.URL.EscapedPath() + "\n\n" + canonicalHeaders + "\n" +
+		signedHeaders + "\n" + hex.EncodeToString(payloadHash[:])
 	canonicalHash := sha256.Sum256([]byte(canonical))
 	scope := date + "/" + s.region + "/ses/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + timestamp + "\n" + scope + "\n" + hex.EncodeToString(canonicalHash[:])
 	signature := hex.EncodeToString(sesHMAC(s.keyForDate(date), stringToSign))
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+s.accessKey+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+s.accessKey+"/"+scope+
+		", SignedHeaders="+signedHeaders+", Signature="+signature)
 }

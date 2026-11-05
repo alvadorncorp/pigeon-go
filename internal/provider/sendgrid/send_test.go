@@ -17,37 +17,11 @@ import (
 
 func TestSendGridPayload(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v3/mail/send" {
-			t.Errorf("request = %s %s", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer secret-key" {
-			t.Errorf("authorization = %q", got)
-		}
-		if got := r.Header.Get("Content-Type"); got != "application/json" {
-			t.Errorf("content type = %q", got)
-		}
-		if got := r.Header.Get("Accept"); got != "application/json" {
-			t.Errorf("accept = %q", got)
-		}
-		var got any
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Errorf("decode payload: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		var want any
-		if err := json.Unmarshal([]byte(`{"personalizations":[{"to":[{"name":"To Name","email":"to@example.com"}],"cc":[{"email":"cc@example.com"}],"bcc":[{"email":"bcc@example.com"}]}],"from":{"name":"Sender","email":"from@example.com"},"reply_to":{"name":"Reply","email":"reply@example.com"},"subject":"Hello <world>","content":[{"type":"text/plain","value":"plain & text"},{"type":"text/html","value":"<b>html</b>"}]}`), &want); err != nil {
-			t.Fatalf("decode expected payload: %v", err)
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("payload = %#v; want %#v", got, want)
-		}
-		w.Header().Set("X-Message-Id", "accepted-id")
-		w.WriteHeader(http.StatusAccepted)
+		checkSendGridRequest(t, w, r)
 	}))
 	defer server.Close()
 
-	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "secret-key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{Provider: provider.SendGrid, APIKey: "secret-key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,35 +42,50 @@ func TestSendGridPayload(t *testing.T) {
 	}
 }
 
+func checkSendGridRequest(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	if r.Method != http.MethodPost || r.URL.Path != "/v3/mail/send" {
+		t.Errorf("request = %s %s", r.Method, r.URL.Path)
+	}
+	if got := r.Header.Get("Authorization"); got != "Bearer secret-key" {
+		t.Errorf("authorization = %q", got)
+	}
+	if got := r.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("content type = %q", got)
+	}
+	if got := r.Header.Get("Accept"); got != "application/json" {
+		t.Errorf("accept = %q", got)
+	}
+	var got any
+	if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+		t.Errorf("decode payload: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	const expected = `{"personalizations":[{"to":[{"name":"To Name","email":"to@example.com"}],` +
+		`"cc":[{"email":"cc@example.com"}],"bcc":[{"email":"bcc@example.com"}]}],` +
+		`"from":{"name":"Sender","email":"from@example.com"},` +
+		`"reply_to":{"name":"Reply","email":"reply@example.com"},"subject":"Hello <world>",` +
+		`"content":[{"type":"text/plain","value":"plain & text"},{"type":"text/html","value":"<b>html</b>"}]}`
+	var want any
+	if err := json.Unmarshal([]byte(expected), &want); err != nil {
+		t.Errorf("decode expected payload: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("payload = %#v; want %#v", got, want)
+	}
+	w.Header().Set("X-Message-Id", "accepted-id")
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func TestSendGridOptionalFieldsAndEmptyReceipt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var got map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Errorf("decode payload: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if _, ok := got["reply_to"]; ok {
-			t.Error("reply_to must be omitted")
-		}
-		var personalizations []map[string]json.RawMessage
-		if err := json.Unmarshal(got["personalizations"], &personalizations); err != nil || len(personalizations) != 1 {
-			t.Errorf("personalizations = %s, error = %v", got["personalizations"], err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		for _, field := range []string{"cc", "bcc"} {
-			if _, ok := personalizations[0][field]; ok {
-				t.Errorf("%s must be omitted", field)
-			}
-		}
-		if string(got["content"]) != `[{"type":"text/html","value":"only html"}]` {
-			t.Errorf("content = %s", got["content"])
-		}
-		w.WriteHeader(http.StatusAccepted)
+		checkSendGridOptionalPayload(t, w, r)
 	}))
 	defer server.Close()
-	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +99,36 @@ func TestSendGridOptionalFieldsAndEmptyReceipt(t *testing.T) {
 	}
 }
 
+func checkSendGridOptionalPayload(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	var got map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+		t.Errorf("decode payload: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if _, ok := got["reply_to"]; ok {
+		t.Error("reply_to must be omitted")
+	}
+	var personalizations []map[string]json.RawMessage
+	if err := json.Unmarshal(got["personalizations"], &personalizations); err != nil || len(personalizations) != 1 {
+		t.Errorf("personalizations = %s, error = %v", got["personalizations"], err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	for _, field := range []string{"cc", "bcc"} {
+		if _, ok := personalizations[0][field]; ok {
+			t.Errorf("%s must be omitted", field)
+		}
+	}
+	if string(got["content"]) != `[{"type":"text/html","value":"only html"}]` {
+		t.Errorf("content = %s", got["content"])
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func TestSendGridErrors(t *testing.T) {
-	if _, err := New(provider.Config{}); err == nil {
+	if _, err := New(&provider.Config{}); err == nil {
 		t.Error("missing API key accepted")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,11 +139,14 @@ func TestSendGridErrors(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	email := &message.Email{From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}}, Subject: "s", Text: "body"}
+	email := &message.Email{
+		From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+		Subject: "s", Text: "body",
+	}
 	_, err = sender.Send(t.Context(), email)
 	deliveryErr, ok := errors.AsType[*message.DeliveryError](err)
 	if !ok || deliveryErr.StatusCode != http.StatusBadRequest {
@@ -151,11 +171,14 @@ func BenchmarkSendGrid(b *testing.B) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
-	sender, err := New(provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
+	sender, err := New(&provider.Config{Provider: provider.SendGrid, APIKey: "key", BaseURL: server.URL})
 	if err != nil {
 		b.Fatal(err)
 	}
-	email := &message.Email{From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}}, Subject: "subject", Text: "body"}
+	email := &message.Email{
+		From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+		Subject: "subject", Text: "body",
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {

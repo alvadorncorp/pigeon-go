@@ -86,16 +86,16 @@ func Validate(email *Email) error {
 	if !validAddress(email.From) {
 		return errors.New("pigeon: invalid from address")
 	}
-	for _, recipients := range [...][]Address{email.To, email.Cc, email.Bcc} {
-		for i, address := range recipients {
-			if !validAddress(address) {
-				return fmt.Errorf("pigeon: invalid recipient at index %d", i)
-			}
-		}
+	if err := validateRecipients(email); err != nil {
+		return err
 	}
 	if email.ReplyTo != (Address{}) && !validAddress(email.ReplyTo) {
 		return errors.New("pigeon: invalid reply-to address")
 	}
+	return validateContent(email)
+}
+
+func validateContent(email *Email) error {
 	if email.Subject == "" || !validHeader(email.Subject) {
 		return errors.New("pigeon: subject must be nonempty UTF-8 without control characters")
 	}
@@ -104,6 +104,17 @@ func Validate(email *Email) error {
 	}
 	if !utf8.ValidString(email.Text) || !utf8.ValidString(email.HTML) {
 		return errors.New("pigeon: email bodies must be valid UTF-8")
+	}
+	return nil
+}
+
+func validateRecipients(email *Email) error {
+	for _, recipients := range [...][]Address{email.To, email.Cc, email.Bcc} {
+		for i, address := range recipients {
+			if !validAddress(address) {
+				return fmt.Errorf("pigeon: invalid recipient at index %d", i)
+			}
+		}
 	}
 	return nil
 }
@@ -121,7 +132,7 @@ func validHeader(s string) bool {
 }
 
 func validAddress(a Address) bool {
-	if len(a.Email) == 0 || len(a.Email) > 254 || !validHeader(a.Name) {
+	if a.Email == "" || len(a.Email) > 254 || !validHeader(a.Name) {
 		return false
 	}
 	for i := range len(a.Email) {
@@ -141,6 +152,10 @@ func validAddress(a Address) bool {
 }
 
 func simpleAddress(local, domain string) bool {
+	return simpleLocal(local) && simpleDomain(domain)
+}
+
+func simpleLocal(local string) bool {
 	for i := range len(local) {
 		c := local[i]
 		switch {
@@ -151,6 +166,10 @@ func simpleAddress(local, domain string) bool {
 			return false
 		}
 	}
+	return true
+}
+
+func simpleDomain(domain string) bool {
 	labelStart := 0
 	for i := range len(domain) {
 		c := domain[i]

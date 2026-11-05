@@ -7,7 +7,10 @@ import (
 )
 
 func validEmail() Email {
-	return Email{From: Address{Email: "sender@example.com"}, To: []Address{{Email: "reader@example.com"}}, Subject: "Hello", Text: "A letter."}
+	return Email{
+		From: Address{Email: "sender@example.com"}, To: []Address{{Email: "reader@example.com"}},
+		Subject: "Hello", Text: "A letter.",
+	}
 }
 
 func TestValidateRejectsUnportableMessages(t *testing.T) {
@@ -83,15 +86,7 @@ func TestValidateAddressMatchesOriginalParser(t *testing.T) {
 	}
 	for _, address := range addresses {
 		t.Run(address, func(t *testing.T) {
-			local, domain, ok := strings.CutLast(address, "@")
-			want := len(address) > 0 && len(address) <= 254 && ok && local != "" && len(local) <= 64 && domain != ""
-			for i := range len(address) {
-				if address[i] <= ' ' || address[i] >= 127 {
-					want = false
-				}
-			}
-			parsed, err := mail.ParseAddress(address)
-			want = want && err == nil && parsed.Name == "" && parsed.Address == address
+			want := originalAddressAccepted(address)
 			e := validEmail()
 			e.From.Email = address
 			if got := Validate(&e) == nil; got != want {
@@ -99,6 +94,18 @@ func TestValidateAddressMatchesOriginalParser(t *testing.T) {
 			}
 		})
 	}
+}
+
+func originalAddressAccepted(address string) bool {
+	local, domain, ok := strings.CutLast(address, "@")
+	want := address != "" && len(address) <= 254 && ok && local != "" && len(local) <= 64 && domain != ""
+	for i := range len(address) {
+		if address[i] <= ' ' || address[i] >= 127 {
+			want = false
+		}
+	}
+	parsed, err := mail.ParseAddress(address)
+	return want && err == nil && parsed.Name == "" && parsed.Address == address
 }
 
 func BenchmarkValidate(b *testing.B) {

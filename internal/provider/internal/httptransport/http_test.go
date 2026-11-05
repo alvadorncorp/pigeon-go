@@ -26,8 +26,11 @@ func TestHTTPRejectsRedirectWithoutLeakingMessage(t *testing.T) {
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}))
 	defer origin.Close()
-	original := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { t.Error("caller redirect policy was used"); return nil }}
-	h, err := New(provider.Config{Provider: provider.Resend, BaseURL: origin.URL, HTTPClient: original}, "")
+	original := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		t.Error("caller redirect policy was used")
+		return nil
+	}}
+	h, err := New(&provider.Config{Provider: provider.Resend, BaseURL: origin.URL, HTTPClient: original}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,59 +67,62 @@ func TestHTTPErrorDiagnosticsDoNotLeakThroughError(t *testing.T) {
 	}
 }
 
-func TestHTTPBoundsAndCancellation(t *testing.T) {
-	t.Run("oversized response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = io.WriteString(w, strings.Repeat("x", maxResponseBytes+1))
-		}))
-		defer server.Close()
-		h, err := New(provider.Config{Provider: provider.Resend, BaseURL: server.URL}, "")
-		if err != nil {
-			t.Fatal(err)
+func TestHTTPOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", maxResponseBytes+1))
+	}))
+	defer server.Close()
+	h, err := New(&provider.Config{Provider: provider.Resend, BaseURL: server.URL}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.Do(req); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestHTTPInFlightCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		select {
+		case <-r.Context().Done():
+		case <-release:
 		}
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, http.NoBody)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := h.Do(req); err == nil || !strings.Contains(err.Error(), "exceeds") {
-			t.Fatalf("error = %v", err)
-		}
-	})
-	t.Run("in-flight cancellation", func(t *testing.T) {
-		entered := make(chan struct{})
-		release := make(chan struct{})
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			close(entered)
-			select {
-			case <-r.Context().Done():
-			case <-release:
-			}
-		}))
-		defer server.Close()
-		defer close(release)
-		h, err := New(provider.Config{Provider: provider.Resend, BaseURL: server.URL}, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, http.NoBody)
-		if err != nil {
-			t.Fatal(err)
-		}
-		done := make(chan error, 1)
-		go func() { _, _, err := h.Do(req); done <- err }()
-		<-entered
-		cancel()
-		if err := <-done; !errors.Is(err, context.Canceled) {
-			t.Fatalf("error = %v", err)
-		}
-	})
+	}))
+	defer server.Close()
+	defer close(release)
+	h, err := New(&provider.Config{Provider: provider.Resend, BaseURL: server.URL}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, _, err := h.Do(req); done <- err }()
+	<-entered
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestHTTPRejectsUnsafeOrigins(t *testing.T) {
-	for _, origin := range []string{"http://example.com", "http://localhost", "https://key@example.com", "https://example.com/path", "https://example.com?key=secret", "https://example.com#fragment", "file:///tmp/mail", "https:///missing"} {
-		if _, err := New(provider.Config{BaseURL: origin}, ""); err == nil {
+	for _, origin := range []string{
+		"http://example.com", "http://localhost", "https://key@example.com",
+		"https://example.com/path", "https://example.com?key=secret", "https://example.com#fragment",
+		"file:///tmp/mail", "https:///missing",
+	} {
+		if _, err := New(&provider.Config{BaseURL: origin}, ""); err == nil {
 			t.Errorf("accepted unsafe origin %q", origin)
 		}
 	}

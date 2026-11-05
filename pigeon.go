@@ -57,7 +57,11 @@ type Mailer struct {
 
 // New validates configuration and creates a reusable mailer without network I/O.
 // An empty or unknown Provider is an error; it never falls back to local delivery.
-func New(config Config) (*Mailer, error) {
+// Config must not be nil. New snapshots its values and does not retain config.
+func New(config *Config) (*Mailer, error) {
+	if config == nil {
+		return nil, errors.New("pigeon: config is nil")
+	}
 	var backend sender
 	var err error
 	switch config.Provider {
@@ -70,9 +74,9 @@ func New(config Config) (*Mailer, error) {
 	case ProviderSendGrid:
 		backend, err = sendgrid.New(config)
 	case ProviderLocal:
-		inbox, err := local.New(config)
-		if err != nil {
-			return nil, err
+		inbox, inboxErr := local.New(config)
+		if inboxErr != nil {
+			return nil, inboxErr
 		}
 		return &Mailer{sender: inbox, inbox: inbox}, nil
 	default:

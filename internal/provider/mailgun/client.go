@@ -16,7 +16,7 @@ type mailgunSender struct {
 }
 
 // New creates a sender for a Mailgun domain using the configured API key.
-func New(config provider.Config) (*mailgunSender, error) {
+func New(config *provider.Config) (*mailgunSender, error) {
 	if err := httptransport.RequireAPIKey(config.APIKey); err != nil {
 		return nil, err
 	}
@@ -36,17 +36,24 @@ func New(config provider.Config) (*mailgunSender, error) {
 
 // validMailgunDomain accepts DNS hostnames only, preventing path and URL injection.
 func validMailgunDomain(domain string) bool {
-	if len(domain) == 0 || len(domain) > 253 {
+	if domain == "" || len(domain) > 253 {
 		return false
 	}
 	for label := range strings.SplitSeq(domain, ".") {
-		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		if !validMailgunLabel(label) {
 			return false
 		}
-		for _, c := range label {
-			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' {
-				return false
-			}
+	}
+	return true
+}
+
+func validMailgunLabel(label string) bool {
+	if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for _, c := range label {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' {
+			return false
 		}
 	}
 	return true

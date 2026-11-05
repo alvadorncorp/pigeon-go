@@ -13,7 +13,10 @@ import (
 	"go.alvadorn.org/pigeon/internal/provider"
 )
 
-const maxResponseBytes = 64 << 10
+const (
+	maxResponseBytes = 64 << 10
+	defaultTimeout   = 30 * time.Second
+)
 
 type Client struct {
 	client   *http.Client
@@ -21,34 +24,50 @@ type Client struct {
 	provider provider.Kind
 }
 
-func New(config provider.Config, defaultURL string) (Client, error) {
+func New(config *provider.Config, defaultURL string) (Client, error) {
 	baseURL := config.BaseURL
 	if baseURL == "" {
 		baseURL = defaultURL
 	}
+	if err := validateOrigin(baseURL); err != nil {
+		return Client{}, err
+	}
+	client, err := configuredClient(config.HTTPClient)
+	if err != nil {
+		return Client{}, err
+	}
+	return Client{client: &client, baseURL: strings.TrimSuffix(baseURL, "/"), provider: config.Provider}, nil
+}
+
+func validateOrigin(baseURL string) error {
 	u, err := url.Parse(baseURL)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
-		return Client{}, errors.New("pigeon: base URL must be an HTTP(S) origin without credentials, path, query or fragment")
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
+		u.Fragment != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
+		return errors.New("pigeon: base URL must be an HTTP(S) origin without credentials, path, query or fragment")
 	}
 	if u.Scheme != "https" {
 		ip := net.ParseIP(u.Hostname())
 		if u.Scheme != "http" || ip == nil || !ip.IsLoopback() {
-			return Client{}, errors.New("pigeon: base URL requires HTTPS except for literal loopback addresses")
+			return errors.New("pigeon: base URL requires HTTPS except for literal loopback addresses")
 		}
 	}
-	client := http.Client{Timeout: 30 * time.Second}
-	if config.HTTPClient != nil {
-		client = *config.HTTPClient
+	return nil
+}
+
+func configuredClient(original *http.Client) (http.Client, error) {
+	client := http.Client{Timeout: defaultTimeout}
+	if original != nil {
+		client = *original
 		if client.Timeout == 0 {
-			client.Timeout = 30 * time.Second
+			client.Timeout = defaultTimeout
 		}
 		if client.Timeout < 0 {
-			return Client{}, errors.New("pigeon: HTTP client timeout cannot be negative")
+			return http.Client{}, errors.New("pigeon: HTTP client timeout cannot be negative")
 		}
 	}
 	// Redirects can resend a message or leak its credentials and body.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return Client{client: &client, baseURL: strings.TrimSuffix(baseURL, "/"), provider: config.Provider}, nil
+	return client, nil
 }
 
 func RequireAPIKey(key string) error {
@@ -70,7 +89,8 @@ func (h *Client) Do(req *http.Request) ([]byte, http.Header, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("pigeon: %s request: %w", h.provider, err)
 	}
-	defer resp.Body.Close()
+	// A close error must not turn an accepted delivery into a retry and duplicate.
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("pigeon: %s response: %w", h.provider, err)
