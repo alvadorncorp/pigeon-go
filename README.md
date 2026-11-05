@@ -85,6 +85,10 @@ go run ./examples/local
 
 Open [127.0.0.1:8025](http://127.0.0.1:8025). The example submits two fictional messages through the same `Send` API used by cloud providers.
 
+The inbox shows messages in a horizontal queue. Select a message or use the previous and next controls to move through it; HTML and Text views are offered when those formats are available. On mobile, use the message chooser to select an email and the native expandable envelope to inspect its addressing details.
+
+The interface and its assets are embedded in the Go binary; no frontend build is required.
+
 To add the inbox to an existing development server:
 
 ```go
@@ -96,7 +100,7 @@ mux := http.NewServeMux()
 mux.Handle("/mail/", http.StripPrefix("/mail", mailer.Inbox()))
 ```
 
-`Inbox()` returns an `http.Handler` for a local mailer and `nil` for a cloud mailer. The library does not start a server or receive SMTP. The handler sees messages from its own mailer instance, in the same process.
+`Inbox()` returns a read-only `http.Handler` for a local mailer and `nil` for a cloud mailer. The library does not start a server or receive SMTP. The handler shows the real messages sent to its own mailer instance in the same process. Message URLs can be opened directly by ID (for example, `/mail/<id>` with the mount above); `http.StripPrefix` keeps inbox links and previews working under the chosen prefix.
 
 The inbox retains up to 100 messages by default and at most 16 MiB of message data, evicting the oldest messages when either limit is reached. Set `LocalCapacity` to change the message count. A single message larger than the byte limit is rejected. Data disappears when the process stops.
 
