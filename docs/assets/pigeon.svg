@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 280" role="img" aria-labelledby="title desc">
+  <title id="title">Pigeon</title>
+  <desc id="desc">A cheerful blue-grey carrier pigeon with a green neck, orange feet and a cream envelope tucked under its wing.</desc>
+  <g stroke="#243b48" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M101 189 48 208 64 171 44 162 108 149" fill="#728caa"/>
+    <path d="m141 223-4 24-17 7m17-7 15 8m31-31 2 22 17 7m-17-7-13 8" fill="none" stroke="#c5763c" stroke-width="7"/>
+    <path d="M94 158c0-34 20-50 52-65 4-33 25-57 57-57 33 0 56 23 56 53 0 24-12 40-33 49 5 19 5 43-6 62-15 26-42 36-72 32-35-4-54-29-54-74Z" fill="#a6bdcf"/>
+    <path d="M148 102c19 14 42 16 69 6l13 25c-20 22-48 29-75 14-8-12-10-28-7-45Z" fill="#588f88" stroke="none"/>
+    <path d="M167 124c15 7 34 7 47 0" fill="none" stroke="#91b8a0" stroke-width="7"/>
+    <path d="M163 156c35-10 60 7 58 33-3 25-25 41-54 42-22 1-41-10-50-25" fill="#dfebee" stroke="none"/>
+    <path d="m247 86 31 13-28 12" fill="#eeb26a"/>
+    <path d="M251 100h13" fill="none" stroke-width="3"/>
+    <ellipse cx="220" cy="78" rx="13" ry="16" fill="#f8faf5" stroke="none"/>
+    <ellipse cx="225" cy="80" rx="6" ry="9" fill="#243b48" stroke="none"/>
+    <circle cx="227" cy="76" r="2.3" fill="#fff" stroke="none"/>
+    <path d="M209 55c6-4 13-3 18 0" fill="none" stroke-width="4"/>
+    <path d="M198 100c6 6 13 7 20 3" fill="none" stroke-width="3.5"/>
+    <g transform="rotate(-12 174 181)">
+      <rect x="124" y="153" width="109" height="69" rx="7" fill="#fff2d8" stroke-width="4"/>
+      <path d="m128 216 37-29m63 29-37-29" fill="none" stroke="#b99a75" stroke-width="3"/>
+      <path d="m128 158 45 34c3 3 7 3 10 0l45-34" fill="#fff8e8" stroke-width="4"/>
+      <circle cx="179" cy="190" r="9" fill="#c86b54" stroke="none"/>
+    </g>
+    <path d="M119 131c-22 11-30 31-22 51 9 22 34 29 62 17 11-5 18-12 25-21-13 3-25 2-36-3" fill="#829fba"/>
+    <path d="M109 160c8 16 22 25 39 26m-43-11c6 12 17 20 30 23" fill="none" stroke="#536f89" stroke-width="4"/>
+  </g>
+</svg>
