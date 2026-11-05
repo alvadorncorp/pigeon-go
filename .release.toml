@@ -1,0 +1,3 @@
+[groups.default]
+source = "tag"
+targets = [{ type = "go", path = "." }]
