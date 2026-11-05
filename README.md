@@ -176,6 +176,7 @@ Tests use local HTTP servers and fixed signing fixtures. They cover request form
 
 CI runs the mandatory format and lint checks on pull requests and pushes to `main`. Merging locally
 does not run hosted CI until the resulting commit is pushed.
+Formatting uses `gofumpt` and `golines`, with a 120-column target matching the `lll` limit.
 
 The public API lives in the root package. Message values live in `internal/message`; `internal/provider` defines the shared configuration. Each adapter has its own package under `internal/provider`: `aws` (SES and SigV4 signing), `resend`, `mailgun`, `sendgrid`, and `local`. Cloud adapters separate client construction from sending; the local inbox separates message retention, HTTP handling, and embedded assets. Shared HTTP policy and error handling live in `internal/provider/internal/httptransport`, which only the provider tree can import. Go's `internal` import rule prevents applications from importing the adapter implementations directly. Protocol references and implementation choices are in [the research notes](docs/research.md).
 

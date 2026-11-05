@@ -210,7 +210,10 @@ func checkLocalFormats(t *testing.T, inbox *LocalInbox, base, id, text, html str
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), text) {
 			t.Errorf("text format: status=%d body=%s", response.Code, response.Body.String())
 		}
-		if !strings.Contains(response.Body.String(), `data-format="text" aria-controls="panel-text" aria-selected="true"`) {
+		if !strings.Contains(
+			response.Body.String(),
+			`data-format="text" aria-controls="panel-text" aria-selected="true"`,
+		) {
 			t.Errorf("text tab not selected: %s", response.Body.String())
 		}
 	}

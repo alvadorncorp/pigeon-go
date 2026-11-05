@@ -49,7 +49,12 @@ func (s *sendGridSender) Send(ctx context.Context, email *message.Email) (messag
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("encode sendgrid message: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.http.BaseURL()+"/v3/mail/send", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		s.http.BaseURL()+"/v3/mail/send",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("create sendgrid request: %w", err)
 	}

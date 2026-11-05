@@ -22,7 +22,10 @@ func TestValidateRejectsUnportableMessages(t *testing.T) {
 		{"missing to", func(e *Email) { e.To = nil; e.Bcc = []Address{{Email: "reader@example.com"}} }},
 		{"invalid cc", func(e *Email) { e.Cc = []Address{{Email: "not-an-address"}} }},
 		{"embedded display name", func(e *Email) { e.From.Email = "Ada <ada@example.com>" }},
-		{"address header injection", func(e *Email) { e.To[0].Email = "reader@example.com\r\nBcc: victim@example.com" }},
+		{
+			"address header injection",
+			func(e *Email) { e.To[0].Email = "reader@example.com\r\nBcc: victim@example.com" },
+		},
 		{"name header injection", func(e *Email) { e.From.Name = "Ada\nBcc: victim@example.com" }},
 		{"subject header injection", func(e *Email) { e.Subject = "Hello\r\nBcc: victim@example.com" }},
 		{"non-ASCII address", func(e *Email) { e.From.Email = "josé@example.com" }},

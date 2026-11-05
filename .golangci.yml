@@ -23,10 +23,12 @@ linters:
     generated: disable
 
 formatters:
-  enable: [gofumpt]
+  enable: [gofumpt, golines]
   exclusions:
     generated: disable
   settings:
+    golines:
+      max-len: 120
     gofumpt:
       extra:
         group-params: true

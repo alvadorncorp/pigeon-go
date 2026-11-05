@@ -134,7 +134,10 @@ func TestSendGridErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		if _, err := io.WriteString(w, `{"errors":[{"message":"sensitive provider detail","field":"from"}]}`); err != nil {
+		if _, err := io.WriteString(
+			w,
+			`{"errors":[{"message":"sensitive provider detail","field":"from"}]}`,
+		); err != nil {
 			t.Errorf("write response: %v", err)
 		}
 	}))

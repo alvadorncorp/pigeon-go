@@ -31,7 +31,9 @@ func sesVerifyRequest(req *http.Request, body []byte, secret, region, token stri
 	if len(timestamp) != 16 {
 		return fmt.Errorf("invalid timestamp %q", timestamp)
 	}
-	headers := "content-type:" + req.Header.Get("Content-Type") + "\nhost:" + req.Host + "\nx-amz-date:" + timestamp + "\n"
+	headers := "content-type:" + req.Header.Get(
+		"Content-Type",
+	) + "\nhost:" + req.Host + "\nx-amz-date:" + timestamp + "\n"
 	signed := "content-type;host;x-amz-date"
 	if token != "" {
 		if req.Header.Get("X-Amz-Security-Token") != token {
