@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -12,7 +16,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test ./...
+          cache-dependency-path: go.mod
+      - name: Test
+        run: go test -race ./...
+      - name: Build examples
+        run: go build ./examples/...
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.15.0
