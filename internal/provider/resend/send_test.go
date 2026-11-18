@@ -1,10 +1,12 @@
 package resend
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/mail"
@@ -61,8 +63,18 @@ func checkResendRequest(t *testing.T, r *http.Request) bool {
 	if r.Header.Get("User-Agent") == "" {
 		t.Error("missing User-Agent")
 	}
+	// The raw bytes must keep the literal `<` of the HTML body: EncodeJSON
+	// escapes HTML only if the no-escaping contract regresses.
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("read request body: %v", err)
+		return false
+	}
+	if !bytes.Contains(raw, []byte("<p>HTML</p>")) {
+		t.Errorf("request body escapes HTML: %s", raw)
+	}
 	var payload map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&payload); err != nil {
 		t.Errorf("decode request: %v", err)
 		return false
 	}
@@ -150,9 +162,6 @@ func TestResendErrors(t *testing.T) {
 		status int
 		body   string
 	}{
-		{"invalid json", http.StatusOK, "{"},
-		{"missing id", http.StatusOK, `{}`},
-		{"empty id", http.StatusOK, `{"id":""}`},
 		{"rejected", http.StatusUnauthorized, `{"message":"invalid key"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,6 +170,47 @@ func TestResendErrors(t *testing.T) {
 	}
 	if _, err := New(&provider.Config{}); err == nil {
 		t.Error("New with no API key succeeded")
+	}
+	if _, err := New(&provider.Config{APIKey: "key with space"}); err == nil {
+		t.Error("New with API key containing a space succeeded")
+	}
+}
+
+// TestResendAcceptedWithoutID pins the COR-2 contract: a 2xx response means
+// Resend accepted the message, so an unusable body or a missing ID must not
+// become an error and cause callers to retry into a duplicate.
+func TestResendAcceptedWithoutID(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"accepted empty object", http.StatusAccepted, `{}`},
+		{"empty body", http.StatusOK, ""},
+		{"invalid json", http.StatusOK, "{"},
+		{"missing id", http.StatusOK, `{"message":"queued"}`},
+		{"empty id", http.StatusOK, `{"id":""}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				if _, err := fmt.Fprint(w, tc.body); err != nil {
+					t.Errorf("write response: %v", err)
+				}
+			}))
+			defer server.Close()
+			sender, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := sender.Send(t.Context(), &message.Email{
+				From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+				Subject: "Subject", Text: "Body",
+			})
+			if err != nil || receipt != (message.Receipt{}) {
+				t.Fatalf("Send = %#v, %v; want empty receipt and no error", receipt, err)
+			}
+		})
 	}
 }
 

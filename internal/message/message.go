@@ -44,7 +44,9 @@ type Email struct {
 }
 
 // Receipt identifies an accepted submission. It does not confirm delivery.
-// ID may be empty when SendGrid accepts a request without X-Message-Id.
+// A nil error from a send always means the provider accepted the message;
+// ID may be empty, for any provider, when the acceptance response omits or
+// garbles its identifier.
 type Receipt struct {
 	ID string
 }

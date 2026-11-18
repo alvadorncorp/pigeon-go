@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -37,7 +36,8 @@ type sesPayload struct {
 	} `json:"Content"`
 }
 
-// Send submits an email to SES and returns its acceptance identifier.
+// Send submits an email to SES and returns its acceptance identifier, which
+// may be empty when SES's response does not carry a MessageId.
 func (s *sesSender) Send(ctx context.Context, email *message.Email) (message.Receipt, error) {
 	var payload sesPayload
 	payload.From = email.From.String()
@@ -73,11 +73,10 @@ func (s *sesSender) Send(ctx context.Context, email *message.Email) (message.Rec
 	var result struct {
 		MessageID string `json:"MessageId"`
 	}
-	if err := json.Unmarshal(response, &result); err != nil {
-		return message.Receipt{}, fmt.Errorf("ses: decode response: %w", err)
-	}
-	if result.MessageID == "" {
-		return message.Receipt{}, errors.New("ses: response missing message id")
-	}
+	// A 2xx response means SES accepted the message, so a nil body (the
+	// transport caps the response size), an unparseable body, or one without
+	// a MessageId is still acceptance: it returns an empty receipt ID instead
+	// of an error that would invite a retry and a duplicate email.
+	_ = json.Unmarshal(response, &result)
 	return message.Receipt{ID: result.MessageID}, nil
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -30,15 +29,14 @@ func (s *mailgunSender) Send(ctx context.Context, email *message.Email) (message
 	if err != nil {
 		return message.Receipt{}, err
 	}
+	// A 2xx status means Mailgun accepted the message. A body that is empty,
+	// unreadable or not the expected JSON must not turn acceptance into an
+	// error: the documented retry guidance would then send a duplicate email.
+	// The receipt ID is simply unknown.
 	var result struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return message.Receipt{}, fmt.Errorf("mailgun: decode response: %w", err)
-	}
-	if result.ID == "" {
-		return message.Receipt{}, errors.New("mailgun: response missing id")
-	}
+	_ = json.Unmarshal(data, &result)
 	return message.Receipt{ID: result.ID}, nil
 }
 

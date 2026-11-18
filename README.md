@@ -14,7 +14,7 @@ Email code usually mixes what the message says with how one particular provider 
 
 Pigeon keeps those concerns apart: the message is a value you can inspect before sending, the mailer is a configured object you share across goroutines, and the provider is a line in the configuration. In tests and local development, the local adapter captures messages in memory and serves a web inbox, so you can read what your application sent without delivering anything to anyone.
 
-The scope is deliberately narrow. Pigeon does not queue, retry, or track delivery. A receipt means the provider accepted the request; whether it reaches the inbox is the provider's business. An application can retry a failed submission, but a timeout can happen after the provider has accepted the message, so a retry may produce a duplicate email. Deciding whether to accept that trade belongs to the application.
+The scope is deliberately narrow. Pigeon does not queue, retry, or track delivery. A receipt means the provider accepted the request; whether it reaches the inbox is the provider's business. A nil error from `Send` always means acceptance, even when `receipt.ID` comes back empty, so an empty ID is never a reason to retry. An application can retry a failed submission, but a timeout can happen after the provider has accepted the message, so a retry may produce a duplicate email. Deciding whether to accept that trade belongs to the application.
 
 Requires **Go 1.27 or newer**. The module path is `go.alvadorn.org/pigeon`.
 

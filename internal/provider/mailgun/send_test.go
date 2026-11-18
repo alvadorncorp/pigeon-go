@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"go.alvadorn.org/pigeon/internal/message"
@@ -104,6 +105,63 @@ func readMailgunMultipart(w http.ResponseWriter, r *http.Request) (map[string][]
 	}
 }
 
+// TestMailgunOmitsOptionalFields pins the optional-field guards: an empty
+// Text, HTML, ReplyTo, Cc or Bcc must not produce an empty multipart field.
+func TestMailgunOmitsOptionalFields(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*message.Email)
+		absent  []string
+		present []string
+	}{
+		{"html only", func(e *message.Email) { e.Text = "" }, []string{"text"}, []string{"html"}},
+		{"text only", func(e *message.Email) { e.HTML = "" }, []string{"html"}, []string{"text"}},
+		{"no reply-to", func(e *message.Email) { e.ReplyTo = message.Address{} }, []string{"h:Reply-To"}, nil},
+		{"no cc", func(e *message.Email) { e.Cc = nil }, []string{"cc"}, []string{"bcc"}},
+		{"no bcc", func(e *message.Email) { e.Bcc = nil }, []string{"bcc"}, []string{"cc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(checkOptionalMultipart(t, tc.absent, tc.present))
+			defer server.Close()
+
+			sender, err := New(&provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			email := mailgunTestEmail()
+			tc.mutate(email)
+			if _, err := sender.Send(context.Background(), email); err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+		})
+	}
+}
+
+func checkOptionalMultipart(t *testing.T, absent, present []string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fields, err := readMailgunMultipart(w, r)
+		if err != nil {
+			t.Errorf("parse multipart: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		checkFieldPresence(t, fields, absent, false)
+		checkFieldPresence(t, fields, present, true)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"id":"<id@example.com>"}`); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}
+}
+
+func checkFieldPresence(t *testing.T, fields map[string][]string, names []string, wantPresent bool) {
+	for _, name := range names {
+		if _, ok := fields[name]; ok != wantPresent {
+			t.Errorf("multipart field %q present = %v, want %v", name, !wantPresent, wantPresent)
+		}
+	}
+}
+
 func TestMailgunInvalidConfiguration(t *testing.T) {
 	for _, domain := range []string{
 		"", ".example.com", "example.com.", "example..com", "-bad.example", "bad-.example",
@@ -119,22 +177,21 @@ func TestMailgunInvalidConfiguration(t *testing.T) {
 	if _, err := New(&provider.Config{Domain: "example.com"}); err == nil {
 		t.Error("accepted empty API key")
 	}
+	if _, err := New(&provider.Config{APIKey: "key with space", Domain: "example.com"}); err == nil {
+		t.Error("accepted API key containing a space")
+	}
 }
 
 func TestMailgunResponseErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		status   int
-		body     string
-		delivery bool
+		name   string
+		status int
+		body   string
 	}{
-		{"bad request", 400, `{"message":"invalid"}`, true},
-		{"unauthorized", 401, "unauthorized", true},
-		{"rate limit", 429, `{"message":"rate limited"}`, true},
-		{"server error", 500, "broken", true},
-		{"invalid json", 200, "{", false},
-		{"missing id", 200, `{"message":"queued"}`, false},
-		{"empty id", 200, `{"id":""}`, false},
+		{"bad request", 400, `{"message":"invalid"}`},
+		{"unauthorized", 401, "unauthorized"},
+		{"rate limit", 429, `{"message":"rate limited"}`},
+		{"server error", 500, "broken"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,27 +206,65 @@ func TestMailgunResponseErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = sender.Send(context.Background(), mailgunTestEmail())
-			checkMailgunResponseError(t, err, tc.delivery, tc.status)
+			checkMailgunResponseError(t, err, tc.status)
 		})
 	}
 }
 
-func checkMailgunResponseError(t *testing.T, err error, wantDelivery bool, status int) {
+// TestMailgunAcceptedWithoutID pins the COR-2 contract: a 2xx response means
+// Mailgun accepted the message, so an unusable body must not become an error
+// and cause callers to retry into a duplicate.
+func TestMailgunAcceptedWithoutID(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"empty body", http.StatusOK, ""},
+		{"invalid json", http.StatusOK, "{"},
+		{"missing id", http.StatusOK, `{"message":"queued"}`},
+		{"empty id", http.StatusOK, `{"id":""}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				if _, err := io.WriteString(w, tc.body); err != nil {
+					t.Errorf("write response: %v", err)
+				}
+			}))
+			defer server.Close()
+			sender, err := New(&provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := sender.Send(context.Background(), mailgunTestEmail())
+			if err != nil || receipt != (message.Receipt{}) {
+				t.Fatalf("Send = %#v, %v; want empty receipt and no error", receipt, err)
+			}
+		})
+	}
+}
+
+func checkMailgunResponseError(t *testing.T, err error, status int) {
 	t.Helper()
-	if err == nil {
-		t.Fatal("expected error")
-	}
 	delivery, ok := errors.AsType[*message.DeliveryError](err)
-	if ok != wantDelivery {
-		t.Fatalf("delivery error = %v, want %v: %v", ok, wantDelivery, err)
+	if !ok {
+		t.Fatalf("error = %v, want *message.DeliveryError", err)
 	}
-	if ok && delivery.StatusCode != status {
+	if delivery.StatusCode != status {
 		t.Errorf("status = %d, want %d", delivery.StatusCode, status)
 	}
 }
 
 func TestMailgunCancellation(t *testing.T) {
-	sender, err := New(&provider.Config{APIKey: "key", Domain: "example.com"})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		t.Error("canceled request reached server")
+	}))
+	defer server.Close()
+
+	sender, err := New(&provider.Config{APIKey: "key", Domain: "example.com", BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +273,9 @@ func TestMailgunCancellation(t *testing.T) {
 	_, err = sender.Send(ctx, mailgunTestEmail())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Errorf("server received %d requests, want 0", got)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -51,14 +50,14 @@ func (s *resendSender) Send(ctx context.Context, email *message.Email) (message.
 	if err != nil {
 		return message.Receipt{}, err
 	}
+	// A 2xx status means Resend accepted the message, even when it returns
+	// 202 with no usable body (for example `{}`). An empty, unreadable or
+	// non-JSON body must not turn acceptance into an error: the documented
+	// retry guidance would then send a duplicate email. The receipt ID is
+	// simply unknown.
 	var result struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(response, &result); err != nil {
-		return message.Receipt{}, fmt.Errorf("resend: decode response: %w", err)
-	}
-	if result.ID == "" {
-		return message.Receipt{}, errors.New("resend: response missing id")
-	}
+	_ = json.Unmarshal(response, &result)
 	return message.Receipt{ID: result.ID}, nil
 }

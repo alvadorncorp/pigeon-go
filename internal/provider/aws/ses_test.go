@@ -44,7 +44,8 @@ func verifySESProtocol(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	want := map[string]any{
-		"FromEmailAddress": "from@example.com",
+		// From carries a display name to exercise the header formatting path.
+		"FromEmailAddress": `"Sender Name" <from@example.com>`,
 		"Destination": map[string]any{
 			"ToAddresses": []any{"to@example.com"}, "CcAddresses": []any{"cc@example.com"},
 			"BccAddresses": []any{"bcc@example.com"},
@@ -77,8 +78,9 @@ func TestSESSendProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	email := &message.Email{
-		From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
-		Cc: []message.Address{{Email: "cc@example.com"}}, Bcc: []message.Address{{Email: "bcc@example.com"}},
+		From: message.Address{Name: "Sender Name", Email: "from@example.com"},
+		To:   []message.Address{{Email: "to@example.com"}},
+		Cc:   []message.Address{{Email: "cc@example.com"}}, Bcc: []message.Address{{Email: "bcc@example.com"}},
 		ReplyTo: message.Address{Email: "reply@example.com"}, Subject: "Olá 世界",
 		Text: "Olá <world>", HTML: "<b>世界</b>",
 	}
@@ -129,18 +131,20 @@ func TestSESResponses(t *testing.T) {
 		status   int
 		body     string
 		delivery bool
+		id       string
 	}{
-		{"rejected", http.StatusBadRequest, `{"message":"rejected","__type":"MessageRejected"}`, true},
-		{"invalid JSON", http.StatusOK, `{`, false},
-		{"missing ID", http.StatusOK, `{}`, false},
+		{"rejected", http.StatusBadRequest, `{"message":"rejected","__type":"MessageRejected"}`, true, ""},
+		{"accepted empty body", http.StatusOK, "", false, ""},
+		{"accepted invalid JSON", http.StatusOK, `{`, false, ""},
+		{"accepted missing ID", http.StatusOK, `{}`, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			checkSESResponse(t, tc.status, tc.body, tc.delivery)
+			checkSESResponse(t, tc.status, tc.body, tc.delivery, tc.id)
 		})
 	}
 }
 
-func checkSESResponse(t *testing.T, status int, body string, wantDelivery bool) {
+func checkSESResponse(t *testing.T, status int, body string, wantDelivery bool, wantID string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
@@ -153,16 +157,152 @@ func checkSESResponse(t *testing.T, status int, body string, wantDelivery bool) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Send(t.Context(), &message.Email{})
-	if err == nil {
-		t.Fatal("expected error")
+	receipt, err := s.Send(t.Context(), &message.Email{})
+	if wantDelivery {
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		var delivery *message.DeliveryError
+		if !errors.As(err, &delivery) {
+			t.Fatalf("error %v is not a delivery error", err)
+		}
+		if delivery.StatusCode != status {
+			t.Errorf("status = %d", delivery.StatusCode)
+		}
+		return
 	}
-	var delivery *message.DeliveryError
-	if errors.As(err, &delivery) != wantDelivery {
-		t.Fatalf("delivery error = %v; error %v", wantDelivery, err)
+	// An accepted message succeeds even when the response carries no usable receipt.
+	if err != nil {
+		t.Fatalf("accepted response produced error: %v", err)
 	}
-	if wantDelivery && delivery.StatusCode != status {
-		t.Errorf("status = %d", delivery.StatusCode)
+	if receipt.ID != wantID {
+		t.Errorf("receipt ID = %q, want %q", receipt.ID, wantID)
+	}
+}
+
+var sesOptionalFieldCases = []struct {
+	name  string
+	email message.Email
+	check func(t *testing.T, payload map[string]any)
+}{
+	{
+		name: "html only",
+		email: message.Email{
+			From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+			Subject: "optional fields", HTML: "<b>hi</b>",
+		},
+		check: func(t *testing.T, payload map[string]any) {
+			body := sesSimpleBody(t, payload)
+			if _, ok := body["Text"]; ok {
+				t.Error("empty Text produced a Text key")
+			}
+			if _, ok := body["Html"]; !ok {
+				t.Error("Html key missing")
+			}
+		},
+	},
+	{
+		name: "text only",
+		email: message.Email{
+			From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+			Subject: "optional fields", Text: "hi",
+		},
+		check: func(t *testing.T, payload map[string]any) {
+			body := sesSimpleBody(t, payload)
+			if _, ok := body["Html"]; ok {
+				t.Error("empty HTML produced an Html key")
+			}
+			if _, ok := body["Text"]; !ok {
+				t.Error("Text key missing")
+			}
+		},
+	},
+	{
+		name: "no reply to",
+		email: message.Email{
+			From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+			Subject: "optional fields", Text: "hi", HTML: "<b>hi</b>",
+		},
+		check: func(t *testing.T, payload map[string]any) {
+			if _, ok := payload["ReplyToAddresses"]; ok {
+				t.Error("empty ReplyTo produced a ReplyToAddresses key")
+			}
+		},
+	},
+	{
+		name: "no cc or bcc",
+		email: message.Email{
+			From: message.Address{Email: "from@example.com"}, To: []message.Address{{Email: "to@example.com"}},
+			Subject: "optional fields", Text: "hi", HTML: "<b>hi</b>",
+		},
+		check: func(t *testing.T, payload map[string]any) {
+			destination, ok := payload["Destination"].(map[string]any)
+			if !ok {
+				t.Fatal("payload has no Destination object")
+			}
+			for _, key := range []string{"CcAddresses", "BccAddresses"} {
+				if _, ok := destination[key]; ok {
+					t.Errorf("empty recipient group produced a %s key", key)
+				}
+			}
+		},
+	},
+}
+
+// sesSimpleBody returns the Content.Simple.Body object of a decoded SES payload.
+func sesSimpleBody(t *testing.T, payload map[string]any) map[string]any {
+	t.Helper()
+	content, _ := payload["Content"].(map[string]any)
+	simple, _ := content["Simple"].(map[string]any)
+	body, _ := simple["Body"].(map[string]any)
+	if body == nil {
+		t.Fatal("payload has no Content.Simple.Body object")
+	}
+	return body
+}
+
+// sesOptionalServer decodes every request body and applies check, answering
+// with an accepted receipt.
+func sesOptionalServer(t *testing.T, check func(t *testing.T, payload map[string]any)) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "read body", http.StatusBadRequest)
+			return
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Errorf("payload: %v", err)
+			http.Error(w, "bad payload", http.StatusBadRequest)
+			return
+		}
+		check(t, payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"MessageId":"optional-id"}`)
+	}))
+}
+
+// TestSESOptionalFieldsOmitted proves each optional field stays absent from
+// the SES payload when the corresponding Email field is left empty.
+func TestSESOptionalFieldsOmitted(t *testing.T) {
+	for _, tc := range sesOptionalFieldCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := sesOptionalServer(t, tc.check)
+			defer server.Close()
+			s, err := New(sesTestConfig(server.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := s.Send(t.Context(), &tc.email)
+			if err != nil {
+				t.Fatalf("Send = %v", err)
+			}
+			if receipt.ID != "optional-id" {
+				t.Errorf("receipt ID = %q, want %q", receipt.ID, "optional-id")
+			}
+		})
 	}
 }
 

@@ -21,7 +21,9 @@ type Address = message.Address
 // Email contains the provider-independent message and its recipients.
 type Email = message.Email
 
-// Receipt identifies provider acceptance, not final delivery.
+// Receipt identifies provider acceptance, not final delivery. A nil error from
+// Send always means acceptance; ID may be empty when the provider's acceptance
+// response carries no usable identifier, for any provider.
 type Receipt = message.Receipt
 
 // DeliveryError reports an unsuccessful provider HTTP response.

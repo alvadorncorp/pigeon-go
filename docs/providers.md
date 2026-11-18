@@ -30,6 +30,6 @@ An empty or unrecognized provider returns an error. Pigeon never silently substi
 
 Concurrent sends share one HTTP client. The default transport keeps only two idle connections per host, so a burst of parallel sends opens a fresh TLS connection for every request past the second. If you send in bursts, pass `WithHTTPClient` with a client whose `Transport` sets `MaxIdleConnsPerHost` to your expected concurrency.
 
-SendGrid may return an empty receipt ID if its acceptance response has no `X-Message-Id` header.
+Any provider may return an empty receipt ID when its acceptance response omits or garbles its message identifier, for example an unreadable body or a missing ID field. That is still a successful send: a nil error always means the message was accepted, and an empty ID is never a reason to retry.
 
 Options capture their arguments when `New` runs; changing them afterwards, such as credentials or the `http.Client`, does not reconfigure the mailer. Create a new one.

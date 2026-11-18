@@ -121,8 +121,15 @@ func checkSendGridOptionalPayload(t *testing.T, w http.ResponseWriter, r *http.R
 			t.Errorf("%s must be omitted", field)
 		}
 	}
-	if string(got["content"]) != `[{"type":"text/html","value":"only html"}]` {
-		t.Errorf("content = %s", got["content"])
+	var content []map[string]any
+	if err := json.Unmarshal(got["content"], &content); err != nil {
+		t.Errorf("decode content: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	want := []map[string]any{{"type": "text/html", "value": "only html"}}
+	if !reflect.DeepEqual(content, want) {
+		t.Errorf("content = %#v, want %#v", content, want)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -130,6 +137,9 @@ func checkSendGridOptionalPayload(t *testing.T, w http.ResponseWriter, r *http.R
 func TestSendGridErrors(t *testing.T) {
 	if _, err := New(&provider.Config{}); err == nil {
 		t.Error("missing API key accepted")
+	}
+	if _, err := New(&provider.Config{Provider: provider.SendGrid, APIKey: "key with space"}); err == nil {
+		t.Error("API key containing a space accepted")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

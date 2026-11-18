@@ -25,6 +25,58 @@ func TestSESAWSPublishedSigningVector(t *testing.T) {
 	}
 }
 
+// TestSESSignGolden pins the complete Authorization header and X-Amz-Date for
+// a fixed request. The constants come from an independent implementation of
+// the AWS SigV4 specification (Python hmac/hashlib, itself verified against
+// the published vector above), not from sigv4.go, so a shared misunderstanding
+// of the canonical request cannot pass. Changing the signed header set or
+// order fails this test without touching sesVerifyRequest.
+func TestSESSignGolden(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		token         string
+		authorization string
+	}{
+		{
+			name:  "static credentials",
+			token: "",
+			authorization: "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20240102/us-east-1/ses/aws4_request, " +
+				"SignedHeaders=content-type;host;x-amz-date, " +
+				"Signature=e37963c7b99cd6dcb7b594da59419b04d8bf7faa9c97297477e07d6ac9867117",
+		},
+		{
+			name:  "session credentials",
+			token: "temporary-session-token",
+			authorization: "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20240102/us-east-1/ses/aws4_request, " +
+				"SignedHeaders=content-type;host;x-amz-date;x-amz-security-token, " +
+				"Signature=bba09b30085c30d25dcc50e5625d46d39e4d0dc27d1b563bc5ed5e10281d0d54",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := sesSender{
+				region: "us-east-1", accessKey: "AKIDEXAMPLE", secretKey: "test-secret", token: tc.token,
+			}
+			req, err := http.NewRequest(
+				http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails", http.NoBody,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Host = req.URL.Host
+			req.Header.Set("Content-Type", "application/json")
+			body := []byte(`{"Data":"golden"}`)
+			s.sign(req, body, time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC))
+			const wantDate = "20240102T030405Z"
+			if got := req.Header.Get("X-Amz-Date"); got != wantDate {
+				t.Errorf("X-Amz-Date = %q, want %q", got, wantDate)
+			}
+			if got := req.Header.Get("Authorization"); got != tc.authorization {
+				t.Errorf("Authorization =\n%s\nwant\n%s", got, tc.authorization)
+			}
+		})
+	}
+}
+
 // sesVerifyRequest independently reconstructs the signature from the received wire bytes.
 func sesVerifyRequest(req *http.Request, body []byte, secret, region, token string) error {
 	timestamp := req.Header.Get("X-Amz-Date")
