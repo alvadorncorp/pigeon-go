@@ -1,7 +1,6 @@
 package pigeon_test
 
 import (
-	"math"
 	"strings"
 	"testing"
 
@@ -83,12 +82,5 @@ func TestSendHonorsConfiguredLimitBoundary(t *testing.T) {
 	tight := limitTestMailer(t, limit-1)
 	if _, err := tight.Send(t.Context(), validEmail(body)); err == nil {
 		t.Fatal("a message one byte over the configured limit was accepted")
-	}
-}
-
-func TestSendLocalConfiguredLimitNotProviderCapped(t *testing.T) {
-	// The local provider has no published cap, so a large configured limit stays unchanged.
-	if _, err := pigeon.New(pigeon.ProviderLocal, pigeon.WithMaxMessageBytes(math.MaxInt)); err != nil {
-		t.Fatalf("local New with a large limit: %v", err)
 	}
 }

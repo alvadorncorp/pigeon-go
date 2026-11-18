@@ -16,14 +16,15 @@ import (
 type Option func(*options)
 
 type options struct {
-	config provider.Config
+	config          provider.Config
+	maxMessageBytes int
 	// targets lists the provider of every provider-specific option applied.
-	targets []provider.Kind
+	targets []Provider
 	// usesHTTP reports whether WithBaseURL or WithHTTPClient was applied.
 	usesHTTP bool
 }
 
-func (o *options) target(kind provider.Kind) {
+func (o *options) target(kind Provider) {
 	o.targets = append(o.targets, kind)
 }
 
@@ -47,7 +48,7 @@ type LocalLimits struct {
 // It is required for ProviderSES.
 func WithSES(region string, credentials AWSCredentials) Option {
 	return func(o *options) {
-		o.target(provider.SES)
+		o.target(ProviderSES)
 		o.config.Region = region
 		o.config.AccessKeyID = credentials.AccessKeyID
 		o.config.SecretAccessKey = credentials.SecretAccessKey
@@ -59,7 +60,7 @@ func WithSES(region string, credentials AWSCredentials) Option {
 // ProviderResend.
 func WithResend(apiKey string) Option {
 	return func(o *options) {
-		o.target(provider.Resend)
+		o.target(ProviderResend)
 		o.config.APIKey = apiKey
 	}
 }
@@ -68,7 +69,7 @@ func WithResend(apiKey string) Option {
 // domain. It is required for ProviderMailgun.
 func WithMailgun(apiKey, domain string) Option {
 	return func(o *options) {
-		o.target(provider.Mailgun)
+		o.target(ProviderMailgun)
 		o.config.APIKey = apiKey
 		o.config.Domain = domain
 	}
@@ -78,7 +79,7 @@ func WithMailgun(apiKey, domain string) Option {
 // ProviderSendGrid.
 func WithSendGrid(apiKey string) Option {
 	return func(o *options) {
-		o.target(provider.SendGrid)
+		o.target(ProviderSendGrid)
 		o.config.APIKey = apiKey
 	}
 }
@@ -87,7 +88,7 @@ func WithSendGrid(apiKey string) Option {
 // it the inbox uses the LocalLimits defaults.
 func WithLocal(limits LocalLimits) Option {
 	return func(o *options) {
-		o.target(provider.Local)
+		o.target(ProviderLocal)
 		o.config.LocalCapacity = limits.Capacity
 		o.config.LocalMaxBytes = limits.MaxBytes
 	}
@@ -121,38 +122,34 @@ func WithHTTPClient(client *http.Client) Option {
 // larger values at their published limit. Negative values are invalid.
 func WithMaxMessageBytes(n int) Option {
 	return func(o *options) {
-		o.config.MaxMessageBytes = n
+		o.maxMessageBytes = n
 	}
 }
 
 // resolveOptions applies opts for kind and rejects an unknown kind, options
 // that do not apply to it, a missing required provider option, and nil options.
-func resolveOptions(kind Provider, opts []Option) (*provider.Config, error) {
-	switch kind {
-	case ProviderSES, ProviderResend, ProviderMailgun, ProviderSendGrid, ProviderLocal:
-	default:
+func resolveOptions(kind Provider, opts []Option) (*options, error) {
+	if _, ok := backends[kind]; !ok {
 		return nil, fmt.Errorf("pigeon: unknown provider %q", kind)
 	}
-	o := options{config: provider.Config{Provider: kind}}
+	o := options{config: provider.Config{Provider: provider.Kind(kind)}}
 	for _, opt := range opts {
 		if opt == nil {
 			return nil, errors.New("pigeon: option is nil")
 		}
 		opt(&o)
 	}
-	configured := false
 	for _, target := range o.targets {
 		if target != kind {
 			return nil, fmt.Errorf("pigeon: %s option does not apply to provider %q", target, kind)
 		}
-		configured = true
 	}
 	if kind == ProviderLocal {
 		if o.usesHTTP {
 			return nil, errors.New("pigeon: local provider does not accept WithBaseURL or WithHTTPClient")
 		}
-	} else if !configured {
+	} else if len(o.targets) == 0 {
 		return nil, fmt.Errorf("pigeon: provider %q requires its provider option", kind)
 	}
-	return &o.config, nil
+	return &o, nil
 }

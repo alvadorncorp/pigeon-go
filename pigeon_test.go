@@ -82,3 +82,17 @@ func TestNewRejectsUnknownProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestCloudInboxIsNotFoundHandler(t *testing.T) {
+	mailer, err := pigeon.New(pigeon.ProviderResend, pigeon.WithResend("key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, handler := range []http.Handler{mailer.Inbox(), (&pigeon.Mailer{}).Inbox()} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", recorder.Code)
+		}
+	}
+}

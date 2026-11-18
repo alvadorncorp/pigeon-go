@@ -37,10 +37,6 @@ type Config struct {
 	// redirects to prevent credential forwarding and accidental repeat sends.
 	// A zero Timeout becomes 30 seconds. Do not mutate the Transport while used.
 	HTTPClient *http.Client
-	// MaxMessageBytes bounds the combined bytes of all email strings before encoding.
-	// Zero selects 1 MiB; cloud providers cap larger values at their published limit.
-	// Negative values are invalid.
-	MaxMessageBytes int
 	// LocalCapacity bounds retained emails. Zero selects 100; negative is invalid.
 	LocalCapacity int
 	// LocalMaxBytes bounds message content retained across the inbox.

@@ -30,52 +30,51 @@ type Receipt = message.Receipt
 type DeliveryError = message.DeliveryError
 
 // Provider selects the adapter when constructing a Mailer.
-type Provider = provider.Kind
+type Provider string
 
+// The supported providers. ProviderLocal keeps messages in memory for development.
 const (
-	ProviderSES      Provider = provider.SES
-	ProviderResend   Provider = provider.Resend
-	ProviderMailgun  Provider = provider.Mailgun
-	ProviderSendGrid Provider = provider.SendGrid
-	ProviderLocal    Provider = provider.Local
+	ProviderSES      Provider = "ses"
+	ProviderResend   Provider = "resend"
+	ProviderMailgun  Provider = "mailgun"
+	ProviderSendGrid Provider = "sendgrid"
+	ProviderLocal    Provider = "local"
 )
 
 type sender interface {
 	Send(context.Context, *message.Email) (message.Receipt, error)
 }
 
-// Per-message byte limits: the shared default and each cloud provider's
-// published cap. The local provider has no provider cap; its own retention
-// budget is enforced by the inbox.
-const (
-	defaultMessageBytes     = 1 << 20
-	mailgunMessageBytesCap  = 25_000_000
-	sendGridMessageBytesCap = 29_999_999
-	awsMessageBytesCap      = 40_000_000
-)
+// defaultMessageBytes is the per-message limit when WithMaxMessageBytes is unset.
+const defaultMessageBytes = 1 << 20
+
+// backends maps each provider to its constructor and published per-message
+// byte cap. A zero cap means none: the local inbox enforces its own budget.
+var backends = map[Provider]struct {
+	maxBytes int
+	build    func(*provider.Config) (sender, error)
+}{
+	ProviderSES:      {40_000_000, func(c *provider.Config) (sender, error) { return aws.New(c) }},
+	ProviderResend:   {40_000_000, func(c *provider.Config) (sender, error) { return resend.New(c) }},
+	ProviderMailgun:  {25_000_000, func(c *provider.Config) (sender, error) { return mailgun.New(c) }},
+	ProviderSendGrid: {29_999_999, func(c *provider.Config) (sender, error) { return sendgrid.New(c) }},
+	ProviderLocal:    {0, func(c *provider.Config) (sender, error) { return local.New(c) }},
+}
 
 // resolveMessageBytes applies the documented semantics of WithMaxMessageBytes:
 // zero selects 1 MiB, a negative value is invalid, and cloud providers cap
-// larger values at their published limit. The local provider keeps the
-// configured value unchanged.
+// larger values at their published limit.
 func resolveMessageBytes(kind Provider, configured int) (int, error) {
 	if configured < 0 {
-		return 0, fmt.Errorf("pigeon: max message bytes must not be negative")
+		return 0, errors.New("pigeon: max message bytes must not be negative")
 	}
 	if configured == 0 {
-		configured = defaultMessageBytes
-		return configured, nil
+		return defaultMessageBytes, nil
 	}
-	switch kind {
-	case ProviderMailgun:
-		return min(configured, mailgunMessageBytesCap), nil
-	case ProviderSendGrid:
-		return min(configured, sendGridMessageBytesCap), nil
-	case ProviderSES, ProviderResend:
-		return min(configured, awsMessageBytesCap), nil
-	default:
-		return configured, nil
+	if limit := backends[kind].maxBytes; limit > 0 {
+		return min(configured, limit), nil
 	}
+	return configured, nil
 }
 
 // Mailer sends email through one configured provider. It is safe for concurrent
@@ -93,37 +92,23 @@ type Mailer struct {
 // provider, nil options, and HTTP options with ProviderLocal are rejected.
 // Pigeon never reads environment variables.
 func New(kind Provider, opts ...Option) (*Mailer, error) {
-	config, err := resolveOptions(kind, opts)
+	o, err := resolveOptions(kind, opts)
 	if err != nil {
 		return nil, err
 	}
-	maxBytes, err := resolveMessageBytes(config.Provider, config.MaxMessageBytes)
+	maxBytes, err := resolveMessageBytes(kind, o.maxMessageBytes)
 	if err != nil {
 		return nil, err
 	}
-	var backend sender
-	switch config.Provider {
-	case ProviderSES:
-		backend, err = aws.NewSES(config)
-	case ProviderResend:
-		backend, err = resend.New(config)
-	case ProviderMailgun:
-		backend, err = mailgun.New(config)
-	case ProviderSendGrid:
-		backend, err = sendgrid.New(config)
-	case ProviderLocal:
-		inbox, inboxErr := local.New(config)
-		if inboxErr != nil {
-			return nil, inboxErr
-		}
-		return &Mailer{sender: inbox, inbox: inbox, maxBytes: maxBytes}, nil
-	default:
-		return nil, fmt.Errorf("pigeon: unknown provider %q", config.Provider)
-	}
+	backend, err := backends[kind].build(&o.config)
 	if err != nil {
 		return nil, err
 	}
-	return &Mailer{sender: backend, maxBytes: maxBytes}, nil
+	inbox, ok := backend.(http.Handler)
+	if !ok {
+		inbox = http.NotFoundHandler()
+	}
+	return &Mailer{sender: backend, inbox: inbox, maxBytes: maxBytes}, nil
 }
 
 // Send validates and synchronously submits one email, respecting ctx.
@@ -156,14 +141,16 @@ func (m *Mailer) Send(ctx context.Context, email *Email) (Receipt, error) {
 	return m.sender.Send(ctx, email)
 }
 
-// Inbox returns the local mailbox's read-only HTTP handler, or nil for a cloud
-// provider. Mount it on a loopback-only development server. It has no
-// authentication and can display private email, including Bcc and reset links.
-// The handler shares memory with this Mailer; it does not receive SMTP or
-// messages from another process. Pigeon never starts an HTTP server itself.
+// Inbox returns the local mailbox's read-only HTTP handler. For a cloud
+// provider it returns a handler that answers 404, never nil. Mount it on a
+// loopback-only development server; it rejects hosts other than IP literals
+// and localhost names. It has no authentication and can display private email,
+// including Bcc and reset links. The handler shares memory with this Mailer;
+// it does not receive SMTP or messages from another process. Pigeon never
+// starts an HTTP server itself.
 func (m *Mailer) Inbox() http.Handler {
-	if m == nil {
-		return nil
+	if m == nil || m.inbox == nil {
+		return http.NotFoundHandler()
 	}
 	return m.inbox
 }
