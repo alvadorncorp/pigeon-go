@@ -1,10 +1,13 @@
 package local
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"go.alvadorn.org/pigeon/internal/provider"
 )
 
 func localTestRequest(handler http.Handler, method, path string, destination ...string) *httptest.ResponseRecorder {
@@ -18,18 +21,139 @@ func localTestRequest(handler http.Handler, method, path string, destination ...
 	return recorder
 }
 
+// localTagAttributes parses the attributes of one tag's body, the text
+// between the tag name and the closing bracket. The inbox template emits
+// quoted constant values or numeric IDs, so entity decoding is not needed.
+func localTagAttributes(tag string) map[string]string {
+	attrs := make(map[string]string)
+	for i := 0; i < len(tag); {
+		if isLocalAttrSpace(tag[i]) {
+			i++
+			continue
+		}
+		name, value, next := localTagAttribute(tag, i)
+		if name != "" {
+			attrs[name] = value
+		}
+		i = next
+	}
+	return attrs
+}
+
+// localTagAttribute parses one attribute at start, returning its name, its
+// value and the offset where parsing resumes.
+func localTagAttribute(tag string, start int) (name, value string, next int) {
+	i := start
+	for i < len(tag) && tag[i] != '=' && !isLocalAttrSpace(tag[i]) {
+		i++
+	}
+	name = tag[start:i]
+	if i == len(tag) || tag[i] != '=' {
+		return name, "", i
+	}
+	i++ // equals sign
+	if i < len(tag) && (tag[i] == '"' || tag[i] == '\'') {
+		value, next = localQuotedValue(tag, i)
+		return name, value, next
+	}
+	valueStart := i
+	for i < len(tag) && !isLocalAttrSpace(tag[i]) {
+		i++
+	}
+	return name, tag[valueStart:i], i
+}
+
+// localQuotedValue reads a quoted attribute value from its opening quote,
+// returning the value and the offset after the closing quote.
+func localQuotedValue(tag string, at int) (value string, next int) {
+	quote := tag[at]
+	i := at + 1
+	valueStart := i
+	for i < len(tag) && tag[i] != quote {
+		i++
+	}
+	value = tag[valueStart:i]
+	if i < len(tag) {
+		i++ // closing quote
+	}
+	return value, i
+}
+
+func isLocalAttrSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n'
+}
+
+func isLocalTagBoundary(c byte) bool {
+	return isLocalAttrSpace(c) || c == '>' || c == '/'
+}
+
+func hasAllAttributes(attrs, want map[string]string) bool {
+	for name, value := range want {
+		got, ok := attrs[name]
+		if !ok || got != value {
+			return false
+		}
+	}
+	return true
+}
+
+// findLocalTag returns the attributes of the first tag element in body that
+// carries every name-value pair in want, or nil when none does.
+func findLocalTag(body, tag string, want map[string]string) map[string]string {
+	open := "<" + tag
+	for from := 0; ; {
+		at := strings.Index(body[from:], open)
+		if at < 0 {
+			return nil
+		}
+		at += from
+		after := at + len(open)
+		from = at + 1
+		if after >= len(body) || !isLocalTagBoundary(body[after]) {
+			continue // a longer tag name, for example "a" inside "article"
+		}
+		end := strings.IndexByte(body[at:], '>')
+		if end < 0 {
+			return nil
+		}
+		attrs := localTagAttributes(body[after : at+end])
+		if hasAllAttributes(attrs, want) {
+			return attrs
+		}
+	}
+}
+
+// assertLocalTag fails when no element with the given tag carries all the
+// attributes, regardless of their order in the markup.
+func assertLocalTag(t *testing.T, body, description, tag string, want map[string]string) {
+	t.Helper()
+	if findLocalTag(body, tag, want) == nil {
+		t.Errorf("%s: no <%s> with %v", description, tag, want)
+	}
+}
+
+// assertNoLocalTag fails when an element with the given tag carries all the
+// attributes, regardless of their order in the markup.
+func assertNoLocalTag(t *testing.T, body, description, tag string, want map[string]string) {
+	t.Helper()
+	if findLocalTag(body, tag, want) != nil {
+		t.Errorf("%s: unexpected <%s> with %v", description, tag, want)
+	}
+}
+
 func assertDetailRendering(t *testing.T, body, subject, abbreviated string) {
 	t.Helper()
 	for _, want := range []string{
 		`<title>` + abbreviated + ` · Pigeon — Inbox local</title>`,
 		`<span class="c-message-subject">` + abbreviated + `</span>`,
 		`<h1 id="c-subject">` + subject + `</h1>`,
-		`<iframe class="mail-preview" title="Prévia HTML da mensagem"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rendered page missing %q", want)
 		}
 	}
+	assertLocalTag(t, body, "HTML preview", "iframe",
+		map[string]string{"class": "mail-preview", "title": "Prévia HTML da mensagem"})
 	if subject != abbreviated && strings.Count(body, subject) != 1 {
 		t.Errorf("full subject should appear only in the detail heading")
 	}
@@ -100,9 +224,10 @@ func TestLocalHTTPMountAndIsolation(t *testing.T) {
 		t.Fatalf("detail escaping or links: %d %s", detail.Code, body)
 	}
 	htmlDetail := localTestRequest(handler, http.MethodGet, "/mail/"+receipt.ID+"?format=html")
-	if !strings.Contains(htmlDetail.Body.String(), `sandbox=""`) ||
-		!strings.Contains(htmlDetail.Body.String(), `src="./`+receipt.ID+`/html"`) {
-		t.Fatalf("preview isolation or relative link: %s", htmlDetail.Body.String())
+	assertLocalTag(t, htmlDetail.Body.String(), "preview isolation", "iframe",
+		map[string]string{"sandbox": "", "src": "./" + receipt.ID + "/html"})
+	if htmlDetail.Code != http.StatusOK {
+		t.Fatalf("html detail status = %d", htmlDetail.Code)
 	}
 	preview := localTestRequest(handler, http.MethodGet, "/mail/"+receipt.ID+"/html", "iframe")
 	if preview.Code != http.StatusOK || preview.Body.String() != email.HTML {
@@ -217,6 +342,81 @@ func TestLocalInboxSelectionAndNavigation(t *testing.T) {
 	}
 }
 
+// The pager anchors are distinct from the queue links: swapping Previous and
+// Next, dropping the pager, or changing the default selection must fail here.
+func TestLocalPagerAnchors(t *testing.T) {
+	inbox := localTestInbox(t, 3)
+	var ids []string
+	for _, subject := range []string{"oldest", "middle", "newest"} {
+		receipt, err := inbox.Send(t.Context(), localTestEmail(subject))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, receipt.ID)
+	}
+	oldest, middle, newest := ids[0], ids[1], ids[2]
+	for _, tc := range []struct {
+		name, selected, previous, next string
+	}{
+		{"newest has no previous", newest, "", middle},
+		{"middle has both", middle, newest, oldest},
+		{"oldest has no next", oldest, middle, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := localTestRequest(inbox, http.MethodGet, "/"+tc.selected).Body.String()
+			if tc.previous == "" {
+				assertNoLocalTag(t, body, tc.name, "a",
+					map[string]string{"aria-label": "Mensagem anterior"})
+			} else {
+				assertLocalTag(t, body, tc.name, "a",
+					map[string]string{"href": "./" + tc.previous, "aria-label": "Mensagem anterior"})
+			}
+			if tc.next == "" {
+				assertNoLocalTag(t, body, tc.name, "a",
+					map[string]string{"aria-label": "Próxima mensagem"})
+			} else {
+				assertLocalTag(t, body, tc.name, "a",
+					map[string]string{"href": "./" + tc.next, "aria-label": "Próxima mensagem"})
+			}
+		})
+	}
+}
+
+// The queue lists at most the newest 100 summaries; a message outside the
+// window stays viewable by ID and navigable through the pager.
+func TestLocalQueueListsNewestHundred(t *testing.T) {
+	const retained = 120
+	inbox, err := New(&provider.Config{LocalCapacity: retained})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= retained; i++ {
+		if _, err := inbox.Send(t.Context(), localTestEmail(fmt.Sprintf("m%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Local IDs are sequential from 1, so message 1 is the oldest.
+	response := localTestRequest(inbox, http.MethodGet, "/1")
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, `<h1 id="c-subject">m1</h1>`) {
+		t.Fatalf("outside-window selection: status=%d body=%s", response.Code, body)
+	}
+	assertLocalTag(t, body, "oldest previous pager", "a",
+		map[string]string{"href": "./2", "aria-label": "Mensagem anterior"})
+	assertNoLocalTag(t, body, "oldest hides next pager", "a",
+		map[string]string{"aria-label": "Próxima mensagem"})
+	if got := strings.Count(body, `class="c-message"`); got != localQueueLimit {
+		t.Errorf("queue entries = %d, want %d", got, localQueueLimit)
+	}
+	if !strings.Contains(body, `href="./120"`) || !strings.Contains(body, `href="./21"`) ||
+		strings.Contains(body, `href="./20"`) || strings.Contains(body, `aria-current="true"`) {
+		t.Errorf("queue window keeps only the newest: %s", body)
+	}
+	if !strings.Contains(body, `<span class="c-count">120</span>`) || !strings.Contains(body, "120 de 120") {
+		t.Errorf("counters must show the full queue: %s", body)
+	}
+}
+
 func checkLocalSelection(
 	t *testing.T, handler http.Handler, path, selected, other, selectedID, olderID, newerID, first, second string,
 ) {
@@ -226,13 +426,24 @@ func checkLocalSelection(
 	if response.Code != http.StatusOK || !strings.Contains(body, selected) || strings.Contains(body, other) {
 		t.Errorf("%s selected wrong body: status=%d body=%s", path, response.Code, body)
 	}
-	if !strings.Contains(body, `href="./`+selectedID+`" aria-current="true"`) {
-		t.Errorf("%s missing selected navigation state", path)
-	}
+	assertLocalTag(t, body, path+" selected queue entry", "a",
+		map[string]string{"href": "./" + selectedID, "aria-current": "true"})
 	for _, id := range []string{olderID, newerID} {
 		if !strings.Contains(body, `href="./`+id+`"`) {
 			t.Errorf("%s missing relative navigation to %s", path, id)
 		}
+	}
+	// The pager anchors carry aria-labels, which queue links never do.
+	if selectedID == olderID {
+		assertLocalTag(t, body, path+" previous pager", "a",
+			map[string]string{"href": "./" + newerID, "aria-label": "Mensagem anterior"})
+		assertNoLocalTag(t, body, path+" oldest hides next pager", "a",
+			map[string]string{"aria-label": "Próxima mensagem"})
+	} else {
+		assertLocalTag(t, body, path+" next pager", "a",
+			map[string]string{"href": "./" + olderID, "aria-label": "Próxima mensagem"})
+		assertNoLocalTag(t, body, path+" newest hides previous pager", "a",
+			map[string]string{"aria-label": "Mensagem anterior"})
 	}
 	if !strings.Contains(body, first) || !strings.Contains(body, second) ||
 		strings.Index(body, `href="./`+newerID+`"`) > strings.LastIndex(body, `href="./`+olderID+`"`) {
@@ -265,17 +476,32 @@ func TestLocalOptionalBodyFormats(t *testing.T) {
 
 func checkLocalFormats(t *testing.T, inbox *LocalInbox, base, id, text, html string) {
 	t.Helper()
+	// A plain request selects the default tab: html when both bodies exist,
+	// text when only text does.
+	plain := localTestRequest(inbox, http.MethodGet, base).Body.String()
+	switch {
+	case html != "":
+		assertLocalTag(t, plain, "plain request selects html tab", "a",
+			map[string]string{"data-format": "html", "aria-selected": "true"})
+	case text != "":
+		assertLocalTag(t, plain, "plain request selects text tab", "a",
+			map[string]string{"data-format": "text", "aria-selected": "true"})
+		assertNoLocalTag(t, plain, "text-only renders no html tab link", "a",
+			map[string]string{"data-format": "html"})
+	default:
+		assertNoLocalTag(t, plain, "bodyless message has no format tabs", "a",
+			map[string]string{"data-format": "html"})
+		assertNoLocalTag(t, plain, "bodyless message has no format tabs", "a",
+			map[string]string{"data-format": "text"})
+	}
 	if text != "" {
 		response := localTestRequest(inbox, http.MethodGet, base+"?format=text")
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), text) {
 			t.Errorf("text format: status=%d body=%s", response.Code, response.Body.String())
 		}
-		if !strings.Contains(
-			response.Body.String(),
-			`data-format="text" aria-controls="panel-text" aria-selected="true"`,
-		) {
-			t.Errorf("text tab not selected: %s", response.Body.String())
-		}
+		assertLocalTag(t, response.Body.String(), "text tab", "a", map[string]string{
+			"data-format": "text", "aria-controls": "panel-text", "aria-selected": "true",
+		})
 	}
 	response := localTestRequest(inbox, http.MethodGet, base+"?format=html")
 	preview := localTestRequest(inbox, http.MethodGet, base+"/html", "iframe")
@@ -293,14 +519,11 @@ func checkLocalHTMLFormat(
 	t *testing.T, response, preview *httptest.ResponseRecorder, id, html string,
 ) {
 	t.Helper()
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `sandbox=""`) ||
-		!strings.Contains(response.Body.String(), `src="./`+id+`/html"`) ||
-		strings.Contains(response.Body.String(), html) {
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), html) {
 		t.Errorf("HTML format not isolated: status=%d body=%s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `data-format="html" aria-controls="panel-html" aria-selected="true"`) {
-		t.Errorf("HTML tab not selected: %s", response.Body.String())
-	}
+	assertLocalTag(t, response.Body.String(), "isolated preview", "iframe",
+		map[string]string{"sandbox": "", "src": "./" + id + "/html"})
 	if preview.Code != http.StatusOK || preview.Body.String() != html {
 		t.Errorf("HTML preview: status=%d body=%q", preview.Code, preview.Body.String())
 	}

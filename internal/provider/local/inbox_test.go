@@ -7,6 +7,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +31,30 @@ func localTestInbox(t *testing.T, capacity int) *LocalInbox {
 	inbox, err := New(&provider.Config{LocalCapacity: capacity})
 	if err != nil {
 		t.Fatal(err)
+	}
+	return inbox
+}
+
+// localPaddedEmail returns an email whose retained size is exactly size; it
+// must exceed the retained size of the bare test email.
+func localPaddedEmail(size int) *message.Email {
+	email := localTestEmail("")
+	email.Subject = strings.Repeat("x", size-localRetainedSize(email))
+	return email
+}
+
+// sendLocalPadded sends padded emails of the given retained sizes into a
+// fresh inbox capped by budget and returns it.
+func sendLocalPadded(t *testing.T, budget int, sizes []int) *LocalInbox {
+	t.Helper()
+	inbox, err := New(&provider.Config{LocalCapacity: 10, LocalMaxBytes: budget})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range sizes {
+		if _, err := inbox.Send(t.Context(), localPaddedEmail(size)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return inbox
 }
@@ -129,7 +155,7 @@ func assertRetention(t *testing.T, inbox *LocalInbox, budget, count int) {
 func TestLocalCustomMaxBytesBudget(t *testing.T) {
 	const retainedCount = 2
 	fits := localTestEmail("fits")
-	budget := retainedCount * message.Size(fits)
+	budget := retainedCount * localRetainedSize(fits)
 	inbox, err := New(&provider.Config{LocalCapacity: retainedCount + 1, LocalMaxBytes: budget})
 	if err != nil {
 		t.Fatal(err)
@@ -160,8 +186,8 @@ func TestLocalCustomMaxBytesBudget(t *testing.T) {
 	}
 	assertRetention(t, inbox, budget, retainedCount)
 	exact := localTestEmail("exact")
-	exact.Text = ""
-	exact.Text = strings.Repeat("x", budget-message.Size(exact))
+	exact.Text = "" // pad against the empty-text retained size so the charge lands on budget
+	exact.Text = strings.Repeat("x", budget-localRetainedSize(exact))
 	if _, err := inbox.Send(t.Context(), exact); err != nil {
 		t.Fatalf("exact-fit message rejected: %v", err)
 	}
@@ -176,7 +202,8 @@ func TestLocalSnapshotOwnsStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := localTestRequest(inbox, http.MethodGet, "/"+sent.ID)
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "subject") {
+	if page.Code != http.StatusOK ||
+		!strings.Contains(page.Body.String(), `<h1 id="c-subject">subject</h1>`) {
 		t.Fatalf("snapshot detail: status=%d body=%s", page.Code, page.Body.String())
 	}
 	email.From.Name = "changed"
@@ -252,13 +279,9 @@ func TestLocalHugeCapacityIsLazy(t *testing.T) {
 }
 
 func TestLocalRingUnwrapsAfterByteEviction(t *testing.T) {
-	// Subjects pad each email to exactly 2u or 1u bytes, with a 3u budget.
-	const unit = 100
-	padded := func(size int) *message.Email {
-		email := localTestEmail("")
-		email.Subject = strings.Repeat("x", size-message.Size(email))
-		return email
-	}
+	// Each email is padded to a retained size of exactly 2u or 1u, with a 3u
+	// budget.
+	const unit = 1000
 	inbox, err := New(&provider.Config{LocalCapacity: 10, LocalMaxBytes: 3 * unit})
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +289,7 @@ func TestLocalRingUnwrapsAfterByteEviction(t *testing.T) {
 	// The third send evicts the 2u email by bytes, moving start below capacity;
 	// the fourth fills that ring and must unwrap it before growing.
 	for _, size := range []int{2 * unit, unit, unit, unit} {
-		if _, err := inbox.Send(t.Context(), padded(size)); err != nil {
+		if _, err := inbox.Send(t.Context(), localPaddedEmail(size)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -282,6 +305,73 @@ func TestLocalRingUnwrapsAfterByteEviction(t *testing.T) {
 			len(inbox.messages),
 			inbox.start,
 		)
+	}
+}
+
+func TestLocalRotateUnwrapsRing(t *testing.T) {
+	for _, tc := range []struct {
+		start int
+		want  string
+	}{
+		{start: 0, want: "1,2,3,4"},
+		{start: 1, want: "2,3,4,1"},
+		{start: 2, want: "3,4,1,2"},
+		{start: 3, want: "4,1,2,3"},
+	} {
+		ring := []localMessage{{ID: "1"}, {ID: "2"}, {ID: "3"}, {ID: "4"}}
+		localRotate(ring, tc.start)
+		ids := make([]string, len(ring))
+		for i, message := range ring {
+			ids[i] = message.ID
+		}
+		if got := strings.Join(ids, ","); got != tc.want {
+			t.Errorf("rotate from %d = %s, want %s", tc.start, got, tc.want)
+		}
+	}
+}
+
+// The ring unwraps in place: rotating a large ring must not allocate, no
+// matter how many messages it holds.
+func TestLocalRotateAllocatesNothing(t *testing.T) {
+	const ringSize = 10000
+	ring := make([]localMessage, ringSize)
+	for i := range ring {
+		ring[i] = localMessage{ID: strconv.Itoa(i)}
+	}
+	if allocs := testing.AllocsPerRun(1, func() { localRotate(ring, ringSize/2) }); allocs != 0 {
+		t.Fatalf("localRotate allocated %v times", allocs)
+	}
+}
+
+// localSendAllocs reports the heap allocations of one Send, measured in
+// isolation after a GC.
+func localSendAllocs(t *testing.T, inbox *LocalInbox, email *message.Email) uint64 {
+	t.Helper()
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if _, err := inbox.Send(t.Context(), email); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	return after.Mallocs - before.Mallocs
+}
+
+// The unwrap may cost no more than the inherent slot growth of a plain
+// append: a send through the unwrap path must not allocate extra buffers,
+// for example a cloned copy of the ring taken before rotating.
+func TestLocalUnwrapAvoidsExtraRingAllocation(t *testing.T) {
+	const unit = 1000
+	// The wrapped inbox reaches the unwrap path because byte eviction moved
+	// start; the plain inbox never evicts and takes the append path. Both
+	// rings are exactly full (length equals capacity), so both measured
+	// sends grow the ring by one slot.
+	wrapped := sendLocalPadded(t, 3*unit, []int{2 * unit, unit, unit})
+	plain := sendLocalPadded(t, 30*unit, []int{2 * unit, unit, unit, unit})
+	unwrap := localSendAllocs(t, wrapped, localPaddedEmail(unit))
+	insert := localSendAllocs(t, plain, localPaddedEmail(unit))
+	if unwrap > insert {
+		t.Fatalf("unwrap send allocated %d, plain insert %d; unwrap must not copy the ring", unwrap, insert)
 	}
 }
 

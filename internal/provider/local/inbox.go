@@ -14,6 +14,25 @@ import (
 
 const localDefaultMaxBytes = 16 << 20
 
+const (
+	// localMessageOverhead approximates the fixed bookkeeping retained next
+	// to each message beyond its content bytes: the localMessage and
+	// message.Email structs, their string headers and allocator slack.
+	localMessageOverhead = 256
+	// localRecipientOverhead approximates the backing-array cost of one
+	// cloned recipient slot (To, Cc or Bcc).
+	localRecipientOverhead = 32
+)
+
+// localRetainedSize estimates the bytes one message charges against the
+// inbox byte budget: its content size plus fixed per-message bookkeeping
+// and one slot per cloned recipient. It approximates the heap a retained
+// message costs, not its exact content size.
+func localRetainedSize(email *message.Email) int {
+	recipients := len(email.To) + len(email.Cc) + len(email.Bcc)
+	return message.Size(email) + localMessageOverhead + localRecipientOverhead*recipients
+}
+
 type localMessage struct {
 	ID    string
 	Email message.Email
@@ -57,8 +76,8 @@ func New(cfg *provider.Config) (*LocalInbox, error) {
 // Send stores a snapshot of the email and returns its local, monotonic ID.
 // The caller must not mutate the email until Send returns.
 func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (message.Receipt, error) {
-	size := message.Size(email)
-	if size > inbox.maxBytes {
+	retained := localRetainedSize(email)
+	if retained > inbox.maxBytes {
 		return message.Receipt{}, fmt.Errorf("local email exceeds %d byte retention limit", inbox.maxBytes)
 	}
 	copyEmail := *email
@@ -76,7 +95,7 @@ func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (messag
 	if err := ctx.Err(); err != nil {
 		return message.Receipt{}, err
 	}
-	for inbox.count > 0 && (inbox.count == inbox.capacity || size > inbox.maxBytes-inbox.bytes) {
+	for inbox.count > 0 && (inbox.count == inbox.capacity || retained > inbox.maxBytes-inbox.bytes) {
 		old := &inbox.messages[inbox.start]
 		inbox.bytes -= old.size
 		*old = localMessage{}
@@ -85,24 +104,31 @@ func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (messag
 	}
 	inbox.next++
 	id := strconv.FormatUint(inbox.next, 10)
-	stored := localMessage{ID: id, Email: copyEmail, size: size}
+	stored := localMessage{ID: id, Email: copyEmail, size: retained}
 	switch {
 	case inbox.count < len(inbox.messages):
 		inbox.messages[(inbox.start+inbox.count)%len(inbox.messages)] = stored
 	case inbox.start == 0:
 		inbox.messages = append(inbox.messages, stored)
 	default:
-		// Byte eviction moved start before the ring reached capacity: unwrap it.
-		inbox.messages = slices.Concat(
-			inbox.messages[inbox.start:],
-			inbox.messages[:inbox.start],
-			[]localMessage{stored},
-		)
+		// Byte eviction moved start before the ring reached capacity: unwrap
+		// it in place, then grow by one slot.
+		localRotate(inbox.messages, inbox.start)
 		inbox.start = 0
+		inbox.messages = append(inbox.messages, stored)
 	}
 	inbox.count++
-	inbox.bytes += size
+	inbox.bytes += retained
 	return message.Receipt{ID: id}, nil
+}
+
+// localRotate unwraps a wrapped ring in place: the segment starting at
+// start moves to the front and the rest follows, preserving order. It
+// allocates nothing.
+func localRotate(messages []localMessage, start int) {
+	slices.Reverse(messages[:start])
+	slices.Reverse(messages[start:])
+	slices.Reverse(messages)
 }
 
 // localCloneAddress owns the bytes of an address snapshot; empty strings are

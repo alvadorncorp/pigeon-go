@@ -10,7 +10,7 @@ go run ./examples/local
 
 Open [127.0.0.1:8025](http://127.0.0.1:8025). The example submits two fictional messages through the same `Send` API used by cloud providers.
 
-The inbox shows messages in a horizontal queue. Select a message or use the previous and next controls to move through it; HTML and Text views are offered when those formats are available. On mobile, use the message chooser to select an email and the native expandable envelope to inspect its addressing details.
+The inbox lists the newest 100 messages in a horizontal queue. Select a message or use the previous and next controls to move through it — including messages past the 100 newest, which stay openable by their ID — and HTML and Text views are offered when those formats are available. On mobile, use the message chooser to select an email and the native expandable envelope to inspect its addressing details.
 
 The interface and its assets are embedded in the Go binary; no frontend build is required.
 
@@ -31,7 +31,7 @@ mux.Handle("/mail/", http.StripPrefix("/mail", mailer.Inbox()))
 
 ## Retention
 
-By default the inbox retains up to 100 messages and 16 MiB of message content. Pass `WithLocal(LocalLimits{Capacity, MaxBytes})` to override these independent limits; zero selects the default and negative values are invalid. Slots are allocated as messages arrive, so a large `Capacity` costs nothing up front. Oldest messages are evicted first. A message exceeding either the `WithMaxMessageBytes` limit or the whole inbox byte budget is rejected. These limits are not process heap limits. Data disappears when the process stops.
+By default the inbox retains up to 100 messages and 16 MiB of message content. Pass `WithLocal(LocalLimits{Capacity, MaxBytes})` to override these independent limits; zero selects the default and negative values are invalid. Slots are allocated as messages arrive, so a large `Capacity` costs nothing up front. Oldest messages are evicted first. A message exceeding either the `WithMaxMessageBytes` limit or the whole inbox byte budget is rejected. The byte budget approximates what a retained message costs in memory: its content size plus a fixed per-message allowance for bookkeeping and a small allowance per recipient, so eviction starts before retained heap drifts far past the configured limit. It is an approximation, not an exact heap measure, and these limits are not process heap limits. Data disappears when the process stops.
 
 The queue and browser title abbreviate subjects after 120 Unicode code points. The selected message shows the full subject.
 

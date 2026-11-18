@@ -20,13 +20,22 @@ type localPage struct {
 	Messages []localSummary
 	Selected localMessage
 	Title    string
+	// Position is the selected message's 1-based place in the full queue,
+	// newest first; Total is the full retained count. The Messages window
+	// may list fewer than Total summaries.
 	Position int
+	Total    int
 	Previous string
 	Next     string
 	Format   string
 }
 
 const subjectMaxRunes = 120
+
+// localQueueLimit caps how many queue summaries the inbox page renders: the
+// newest ones. Older messages stay openable by ID and reachable through the
+// pager.
+const localQueueLimit = 100
 
 // abbreviate shortens a subject for queue and page title contexts, keeping
 // whole runes so multibyte characters are never split.
@@ -138,20 +147,32 @@ func (inbox *LocalInbox) servePreview(w http.ResponseWriter, r *http.Request, id
 func (inbox *LocalInbox) pageSnapshot(id string) localPage {
 	inbox.mu.RLock()
 	defer inbox.mu.RUnlock()
-	page := localPage{Messages: make([]localSummary, inbox.count)}
+	page := localPage{
+		Messages: make([]localSummary, min(inbox.count, localQueueLimit)),
+		Total:    inbox.count,
+	}
+	seenSelected := false
+	var newerNeighbor string // the candidate from the previous pass, one position newer
 	for i := range inbox.count {
 		candidate := inbox.messages[(inbox.start+inbox.count-1-i)%len(inbox.messages)]
-		page.Messages[i] = localSummary{
-			ID:      candidate.ID,
-			From:    candidate.Email.From,
-			To:      candidate.Email.To,
-			Subject: abbreviate(candidate.Email.Subject),
+		if i < len(page.Messages) {
+			page.Messages[i] = localSummary{
+				ID:      candidate.ID,
+				From:    candidate.Email.From,
+				To:      candidate.Email.To,
+				Subject: abbreviate(candidate.Email.Subject),
+			}
 		}
 		if candidate.ID == id || (id == "" && i == 0) {
 			page.Selected = candidate
-			page.Title = page.Messages[i].Subject
+			page.Title = abbreviate(candidate.Email.Subject)
 			page.Position = i + 1
+			page.Previous = newerNeighbor
+			seenSelected = true
+		} else if seenSelected && page.Next == "" {
+			page.Next = candidate.ID
 		}
+		newerNeighbor = candidate.ID
 	}
 	return page
 }
@@ -161,12 +182,6 @@ func (inbox *LocalInbox) servePage(w http.ResponseWriter, r *http.Request, id st
 	if id != "" && page.Selected.ID == "" {
 		http.NotFound(w, r)
 		return
-	}
-	if page.Position > 1 {
-		page.Previous = page.Messages[page.Position-2].ID
-	}
-	if page.Position > 0 && page.Position < len(page.Messages) {
-		page.Next = page.Messages[page.Position].ID
 	}
 	item := page.Selected
 	if item.Email.HTML != "" {
