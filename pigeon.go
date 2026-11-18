@@ -62,7 +62,7 @@ const (
 // zero selects 1 MiB, a negative value is invalid, and cloud providers cap
 // larger values at their published limit. The local provider keeps the
 // configured value unchanged.
-func resolveMessageBytes(provider Provider, configured int) (int, error) {
+func resolveMessageBytes(kind Provider, configured int) (int, error) {
 	if configured < 0 {
 		return 0, fmt.Errorf("pigeon: max message bytes must not be negative")
 	}
@@ -70,7 +70,7 @@ func resolveMessageBytes(provider Provider, configured int) (int, error) {
 		configured = defaultMessageBytes
 		return configured, nil
 	}
-	switch provider {
+	switch kind {
 	case ProviderMailgun:
 		return min(configured, mailgunMessageBytesCap), nil
 	case ProviderSendGrid:
@@ -147,7 +147,11 @@ func (m *Mailer) Send(ctx context.Context, email *Email) (Receipt, error) {
 		return Receipt{}, err
 	}
 	if size := message.Size(email); size > m.maxBytes {
-		return Receipt{}, fmt.Errorf("pigeon: message size %d bytes exceeds the configured limit of %d bytes", size, m.maxBytes)
+		return Receipt{}, fmt.Errorf(
+			"pigeon: message size %d bytes exceeds the configured limit of %d bytes",
+			size,
+			m.maxBytes,
+		)
 	}
 	return m.sender.Send(ctx, email)
 }

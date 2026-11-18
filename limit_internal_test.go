@@ -44,7 +44,14 @@ func TestResolveMessageBytesProviderCaps(t *testing.T) {
 		for _, configured := range []int{tc.cap, tc.cap + 1, math.MaxInt} {
 			limit, err := resolveMessageBytes(tc.provider, configured)
 			if err != nil || limit != tc.cap {
-				t.Errorf("provider %s configured %d limit = %d, %v; want %d, nil", tc.provider, configured, limit, err, tc.cap)
+				t.Errorf(
+					"provider %s configured %d limit = %d, %v; want %d, nil",
+					tc.provider,
+					configured,
+					limit,
+					err,
+					tc.cap,
+				)
 			}
 		}
 		if limit, err := resolveMessageBytes(tc.provider, tc.cap-1); err != nil || limit != tc.cap-1 {

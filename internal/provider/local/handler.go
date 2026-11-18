@@ -126,7 +126,10 @@ func (inbox *LocalInbox) pageSnapshot(id string) localPage {
 	for i := range inbox.count {
 		candidate := inbox.messages[(inbox.start+inbox.count-1-i)%len(inbox.messages)]
 		page.Messages[i] = localSummary{
-			ID: candidate.ID, From: candidate.Email.From, To: candidate.Email.To, Subject: abbreviate(candidate.Email.Subject),
+			ID:      candidate.ID,
+			From:    candidate.Email.From,
+			To:      candidate.Email.To,
+			Subject: abbreviate(candidate.Email.Subject),
 		}
 		if candidate.ID == id || (id == "" && i == 0) {
 			page.Selected = candidate

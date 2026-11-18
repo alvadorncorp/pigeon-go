@@ -116,6 +116,13 @@ func TestLocalMaxBytesConfig(t *testing.T) {
 	}
 }
 
+func assertRetention(t *testing.T, inbox *LocalInbox, budget, count int) {
+	t.Helper()
+	if inbox.bytes != budget || inbox.count != count {
+		t.Fatalf("retention invariant: bytes=%d count=%d", inbox.bytes, inbox.count)
+	}
+}
+
 func TestLocalCustomMaxBytesBudget(t *testing.T) {
 	const retainedCount = 2
 	fits := localTestEmail("fits")
@@ -132,9 +139,7 @@ func TestLocalCustomMaxBytesBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inbox.bytes != budget {
-		t.Fatalf("bytes = %d, want %d", inbox.bytes, budget)
-	}
+	assertRetention(t, inbox, budget, retainedCount)
 	if _, err := inbox.Send(t.Context(), fits); err != nil {
 		t.Fatal(err)
 	}
@@ -144,26 +149,20 @@ func TestLocalCustomMaxBytesBudget(t *testing.T) {
 	if got := localTestRequest(inbox, http.MethodGet, "/"+second.ID).Code; got != http.StatusOK {
 		t.Fatalf("survivor status = %d", got)
 	}
-	if inbox.bytes != budget || inbox.count != retainedCount {
-		t.Fatalf("retention invariant: bytes=%d count=%d", inbox.bytes, inbox.count)
-	}
+	assertRetention(t, inbox, budget, retainedCount)
 	oversized := localTestEmail("oversized")
 	oversized.Subject = strings.Repeat("x", budget+1)
 	if _, err := inbox.Send(t.Context(), oversized); err == nil {
 		t.Fatal("oversized message accepted")
 	}
-	if inbox.bytes != budget || inbox.count != retainedCount {
-		t.Fatalf("rejection changed retention: bytes=%d count=%d", inbox.bytes, inbox.count)
-	}
+	assertRetention(t, inbox, budget, retainedCount)
 	exact := localTestEmail("exact")
 	exact.Text = ""
 	exact.Text = strings.Repeat("x", budget-message.Size(exact))
 	if _, err := inbox.Send(t.Context(), exact); err != nil {
 		t.Fatalf("exact-fit message rejected: %v", err)
 	}
-	if inbox.bytes != budget || inbox.count != 1 {
-		t.Fatalf("exact-fit invariant: bytes=%d count=%d", inbox.bytes, inbox.count)
-	}
+	assertRetention(t, inbox, budget, 1)
 }
 
 func TestLocalSnapshotOwnsStrings(t *testing.T) {

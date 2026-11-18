@@ -17,6 +17,33 @@ func localTestRequest(handler http.Handler, method, path string, destination ...
 	return recorder
 }
 
+func assertDetailRendering(t *testing.T, body, subject, abbreviated string) {
+	t.Helper()
+	for _, want := range []string{
+		`<title>` + abbreviated + ` · Pigeon — Inbox local</title>`,
+		`<span class="c-message-subject">` + abbreviated + `</span>`,
+		`<h1 id="c-subject">` + subject + `</h1>`,
+		`<iframe class="mail-preview" title="Prévia HTML da mensagem"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered page missing %q", want)
+		}
+	}
+	if subject != abbreviated && strings.Count(body, subject) != 1 {
+		t.Errorf("full subject should appear only in the detail heading")
+	}
+}
+
+func assertQueueRendering(t *testing.T, body, subject, abbreviated string) {
+	t.Helper()
+	if !strings.Contains(body, `<span class="c-message-subject">`+abbreviated+`</span>`) {
+		t.Error("unselected message missing abbreviated queue subject")
+	}
+	if subject != abbreviated && strings.Contains(body, subject) {
+		t.Error("unselected message exposed its full subject")
+	}
+}
+
 func TestLocalSubjectRendering(t *testing.T) {
 	prefix := strings.Repeat("界", subjectMaxRunes-2) + "🙂"
 	for _, tc := range []struct {
@@ -35,34 +62,16 @@ func TestLocalSubjectRendering(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := localTestRequest(inbox, http.MethodGet, "/"+receipt.ID)
-			body := response.Body.String()
-			for _, want := range []string{
-				`<title>` + tc.abbreviated + ` · Pigeon — Inbox local</title>`,
-				`<span class="c-message-subject">` + tc.abbreviated + `</span>`,
-				`<h1 id="c-subject">` + tc.subject + `</h1>`,
-				`<iframe class="mail-preview" title="Prévia HTML da mensagem"`,
-			} {
-				if !strings.Contains(body, want) {
-					t.Errorf("rendered page missing %q", want)
-				}
-			}
 			if response.Code != http.StatusOK {
 				t.Errorf("status = %d, want 200", response.Code)
 			}
-			if tc.subject != tc.abbreviated && strings.Count(body, tc.subject) != 1 {
-				t.Errorf("full subject should appear only in the detail heading")
-			}
+			assertDetailRendering(t, response.Body.String(), tc.subject, tc.abbreviated)
 
 			if _, err := inbox.Send(t.Context(), localTestEmail("other")); err != nil {
 				t.Fatal(err)
 			}
 			other := localTestRequest(inbox, http.MethodGet, "/").Body.String()
-			if !strings.Contains(other, `<span class="c-message-subject">`+tc.abbreviated+`</span>`) {
-				t.Error("unselected message missing abbreviated queue subject")
-			}
-			if tc.subject != tc.abbreviated && strings.Contains(other, tc.subject) {
-				t.Error("unselected message exposed its full subject")
-			}
+			assertQueueRendering(t, other, tc.subject, tc.abbreviated)
 		})
 	}
 }
