@@ -51,11 +51,14 @@ func BenchmarkSend(b *testing.B) {
 
 func benchmarkSendWorkload(b *testing.B, kind pigeon.Provider, size int) {
 	b.Helper()
-	mailer, err := pigeon.New(&pigeon.Config{
-		Provider: kind, APIKey: "benchmark-key", Domain: "example.com", Region: "us-east-1",
-		AccessKeyID: "AKIDEXAMPLE", SecretAccessKey: "benchmark-secret",
-		HTTPClient: &http.Client{Transport: benchmarkTransport{}},
-	})
+	var opts []pigeon.Option
+	if opt := providerOption(kind); opt != nil {
+		opts = append(opts, opt)
+	}
+	if kind != pigeon.ProviderLocal {
+		opts = append(opts, pigeon.WithHTTPClient(&http.Client{Transport: benchmarkTransport{}}))
+	}
+	mailer, err := pigeon.New(kind, opts...)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -20,7 +20,7 @@ func TestSendRejectsInvalidMessagesBeforeNetwork(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"should-not-send"}`)
 	}))
 	defer server.Close()
-	mailer, err := pigeon.New(&pigeon.Config{Provider: pigeon.ProviderResend, APIKey: "test-key", BaseURL: server.URL})
+	mailer, err := pigeon.New(pigeon.ProviderResend, pigeon.WithResend("test-key"), pigeon.WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestSendRejectsInvalidMessagesBeforeNetwork(t *testing.T) {
 }
 
 func TestLocalInboxUsesSameMailerAndRetainsSnapshot(t *testing.T) {
-	mailer, err := pigeon.New(&pigeon.Config{Provider: pigeon.ProviderLocal, LocalCapacity: 2})
+	mailer, err := pigeon.New(pigeon.ProviderLocal, pigeon.WithLocal(pigeon.LocalLimits{Capacity: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestLocalInboxUsesSameMailerAndRetainsSnapshot(t *testing.T) {
 
 func TestNewRejectsUnknownProvider(t *testing.T) {
 	for _, kind := range []pigeon.Provider{"", "typo"} {
-		if _, err := pigeon.New(&pigeon.Config{Provider: kind}); err == nil {
+		if _, err := pigeon.New(kind); err == nil {
 			t.Fatalf("provider %q silently accepted", kind)
 		}
 	}

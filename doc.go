@@ -2,9 +2,9 @@
 // message-building code. It supports Amazon SES, Resend, Mailgun, Twilio SendGrid,
 // and a local development inbox using only the Go standard library.
 //
-// Create a Mailer once with New and a non-nil *Config, then share it across
-// goroutines. New reads and snapshots the configuration synchronously; later
-// changes to the Config do not reconfigure the Mailer. Build messages with Email
+// Create a Mailer once with New, passing a Provider and options, then share it
+// across goroutines. Options capture their arguments when New runs; changing
+// them afterwards does not reconfigure the Mailer. Build messages with Email
 // and Address values and submit them with Mailer.Send. A successful Receipt means
 // the provider accepted the submission, not that it was delivered. Pigeon does not
 // queue, retry, refresh credentials, or track delivery events.

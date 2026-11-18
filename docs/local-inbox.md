@@ -19,7 +19,7 @@ The interface and its assets are embedded in the Go binary; no frontend build is
 To add the inbox to an existing development server:
 
 ```go
-mailer, err := pigeon.New(&pigeon.Config{Provider: pigeon.ProviderLocal})
+mailer, err := pigeon.New(pigeon.ProviderLocal)
 if err != nil {
     log.Fatal(err)
 }
@@ -31,7 +31,7 @@ mux.Handle("/mail/", http.StripPrefix("/mail", mailer.Inbox()))
 
 ## Retention
 
-By default the inbox retains up to 100 messages and 16 MiB of message content. Set `LocalCapacity` and `LocalMaxBytes` to override these independent limits. Oldest messages are evicted first. A message exceeding either `MaxMessageBytes` or the whole inbox byte budget is rejected. These limits are not process heap limits. Data disappears when the process stops.
+By default the inbox retains up to 100 messages and 16 MiB of message content. Pass `WithLocal(LocalLimits{Capacity, MaxBytes})` to override these independent limits; zero selects the default and negative values are invalid. Oldest messages are evicted first. A message exceeding either the `WithMaxMessageBytes` limit or the whole inbox byte budget is rejected. These limits are not process heap limits. Data disappears when the process stops.
 
 The queue and browser title abbreviate subjects after 120 Unicode code points. The selected message shows the full subject.
 

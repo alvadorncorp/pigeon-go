@@ -36,16 +36,14 @@ func run() error {
 	} else if from == "" || to == "" {
 		return fmt.Errorf("set PIGEON_FROM and PIGEON_TO before sending through a cloud provider")
 	}
-	mailer, err := pigeon.New(&pigeon.Config{
-		Provider:        kind,
-		APIKey:          os.Getenv("PIGEON_API_KEY"),
-		Domain:          os.Getenv("PIGEON_DOMAIN"),
-		Region:          os.Getenv("AWS_REGION"),
-		AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		SessionToken:    os.Getenv("AWS_SESSION_TOKEN"),
-		BaseURL:         os.Getenv("PIGEON_BASE_URL"),
-	})
+	var opts []pigeon.Option
+	if opt := providerOption(kind); opt != nil {
+		opts = append(opts, opt)
+	}
+	if baseURL := os.Getenv("PIGEON_BASE_URL"); baseURL != "" {
+		opts = append(opts, pigeon.WithBaseURL(baseURL))
+	}
+	mailer, err := pigeon.New(kind, opts...)
 	if err != nil {
 		return err
 	}
@@ -63,4 +61,27 @@ func run() error {
 	}
 	fmt.Printf("Accepted by %s: %s\n", kind, receipt.ID)
 	return nil
+}
+
+// providerOption builds the provider-specific option for kind from the
+// environment. It returns nil for local delivery, where the option is
+// optional, and for an unknown kind, which New reports.
+func providerOption(kind pigeon.Provider) pigeon.Option {
+	apiKey := os.Getenv("PIGEON_API_KEY")
+	switch kind {
+	case pigeon.ProviderSES:
+		return pigeon.WithSES(os.Getenv("AWS_REGION"), pigeon.AWSCredentials{
+			AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
+			SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			SessionToken:    os.Getenv("AWS_SESSION_TOKEN"),
+		})
+	case pigeon.ProviderResend:
+		return pigeon.WithResend(apiKey)
+	case pigeon.ProviderMailgun:
+		return pigeon.WithMailgun(apiKey, os.Getenv("PIGEON_DOMAIN"))
+	case pigeon.ProviderSendGrid:
+		return pigeon.WithSendGrid(apiKey)
+	default:
+		return nil
+	}
 }

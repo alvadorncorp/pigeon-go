@@ -1,6 +1,6 @@
 # Errors and timeouts
 
-Pass a context to bound an individual send. The default HTTP timeout is 30 seconds. You can supply an `HTTPClient`; Pigeon copies the client, shares its transport, and disables redirects. A zero client timeout gets the same 30-second default.
+Pass a context to bound an individual send. The default HTTP timeout is 30 seconds. You can supply `WithHTTPClient`; Pigeon copies the client, shares its transport, and disables redirects. A zero client timeout gets the same 30-second default.
 
 Provider HTTP failures support typed inspection:
 

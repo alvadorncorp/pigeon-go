@@ -33,9 +33,7 @@ import (
 )
 
 func main() {
-    mailer, err := pigeon.New(&pigeon.Config{
-        Provider: pigeon.ProviderLocal,
-    })
+    mailer, err := pigeon.New(pigeon.ProviderLocal)
     if err != nil {
         log.Fatal(err)
     }
@@ -58,7 +56,7 @@ func main() {
 
 | Document | Contents |
 | --- | --- |
-| [Providers](docs/providers.md) | Configuration for each provider, base URLs, credential handling |
+| [Providers](docs/providers.md) | Options for each provider, base URLs, credential handling |
 | [The local inbox](docs/local-inbox.md) | The development inbox: running it, mounting it, retention, security |
 | [Message contract](docs/message-contract.md) | The `Email` value, validation rules, goroutine safety |
 | [Errors and timeouts](docs/errors-and-timeouts.md) | `DeliveryError`, HTTP timeouts, context handling |

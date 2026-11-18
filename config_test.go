@@ -9,43 +9,91 @@ import (
 	"go.alvadorn.org/pigeon"
 )
 
-func TestNewRejectsNilConfig(t *testing.T) {
-	if _, err := pigeon.New(nil); err == nil {
-		t.Fatal("nil configuration accepted")
+func TestNewRejectsInvalidOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		kind pigeon.Provider
+		opts []pigeon.Option
+	}{
+		{
+			name: "nil option",
+			kind: pigeon.ProviderResend,
+			opts: []pigeon.Option{pigeon.WithResend("key"), nil},
+		},
+		{
+			name: "provider option for another provider",
+			kind: pigeon.ProviderSES,
+			opts: []pigeon.Option{
+				pigeon.WithSES("us-east-1", pigeon.AWSCredentials{AccessKeyID: "id", SecretAccessKey: "secret"}),
+				pigeon.WithMailgun("key", "mg.example.com"),
+			},
+		},
+		{
+			name: "local with another provider's option",
+			kind: pigeon.ProviderLocal,
+			opts: []pigeon.Option{pigeon.WithResend("key")},
+		},
+		{
+			name: "SES without its provider option",
+			kind: pigeon.ProviderSES,
+		},
+		{
+			name: "Resend without its provider option",
+			kind: pigeon.ProviderResend,
+		},
+		{
+			name: "Mailgun without its provider option",
+			kind: pigeon.ProviderMailgun,
+		},
+		{
+			name: "SendGrid without its provider option",
+			kind: pigeon.ProviderSendGrid,
+		},
+		{
+			name: "local with WithBaseURL",
+			kind: pigeon.ProviderLocal,
+			opts: []pigeon.Option{pigeon.WithBaseURL("https://127.0.0.1:9000")},
+		},
+		{
+			name: "local with WithHTTPClient",
+			kind: pigeon.ProviderLocal,
+			opts: []pigeon.Option{pigeon.WithHTTPClient(&http.Client{})},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pigeon.New(tc.kind, tc.opts...); err == nil {
+				t.Fatal("invalid options accepted")
+			}
+		})
 	}
 }
 
-func TestNewSnapshotsConfig(t *testing.T) {
+func TestNewLastRepeatedOptionWins(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer original-key" {
-			t.Errorf("authorization = %q, want original credentials", got)
+		if got := r.Header.Get("Authorization"); got != "Bearer new-key" {
+			t.Errorf("authorization = %q, want credentials from the last option", got)
 		}
-		_, _ = io.WriteString(w, `{"id":"config-snapshot"}`)
+		_, _ = io.WriteString(w, `{"id":"last-wins"}`)
 	}))
 	defer server.Close()
-	config := &pigeon.Config{
-		Provider: pigeon.ProviderResend,
-		APIKey:   "original-key",
-		BaseURL:  server.URL,
-	}
-	mailer, err := pigeon.New(config)
+	mailer, err := pigeon.New(
+		pigeon.ProviderResend,
+		pigeon.WithResend("old-key"),
+		pigeon.WithResend("new-key"),
+		pigeon.WithBaseURL(server.URL),
+	)
 	if err != nil {
 		t.Fatal(err)
-	}
-	config.Provider = pigeon.ProviderLocal
-	config.APIKey = "mutated-key"
-	config.BaseURL = "https://unused.invalid"
-	if mailer.Inbox() != nil {
-		t.Fatal("configuration mutation changed backend")
 	}
 	email := &pigeon.Email{
 		From:    pigeon.Address{Email: "sender@example.com"},
 		To:      []pigeon.Address{{Email: "reader@example.com"}},
-		Subject: "Config snapshot",
-		Text:    "Credentials remain fixed after construction.",
+		Subject: "Last option wins",
+		Text:    "A repeated option applies its final value.",
 	}
 	receipt, sendErr := mailer.Send(t.Context(), email)
-	if sendErr != nil || receipt.ID != "config-snapshot" {
+	if sendErr != nil || receipt.ID != "last-wins" {
 		t.Fatalf("receipt = %+v, error = %v", receipt, sendErr)
 	}
 }

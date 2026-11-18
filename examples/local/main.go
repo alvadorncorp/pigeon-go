@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	mailer, err := pigeon.New(&pigeon.Config{Provider: pigeon.ProviderLocal})
+	mailer, err := pigeon.New(pigeon.ProviderLocal)
 	if err != nil {
 		log.Fatal(err)
 	}

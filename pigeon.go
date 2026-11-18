@@ -40,10 +40,6 @@ const (
 	ProviderLocal    Provider = provider.Local
 )
 
-// Config holds the provider selection and credentials. See its fields for
-// provider-specific requirements. Pigeon never reads environment variables.
-type Config = provider.Config
-
 type sender interface {
 	Send(context.Context, *message.Email) (message.Receipt, error)
 }
@@ -58,7 +54,7 @@ const (
 	awsMessageBytesCap      = 40_000_000
 )
 
-// resolveMessageBytes applies the documented semantics of Config.MaxMessageBytes:
+// resolveMessageBytes applies the documented semantics of WithMaxMessageBytes:
 // zero selects 1 MiB, a negative value is invalid, and cloud providers cap
 // larger values at their published limit. The local provider keeps the
 // configured value unchanged.
@@ -90,12 +86,16 @@ type Mailer struct {
 	maxBytes int
 }
 
-// New validates configuration and creates a reusable mailer without network I/O.
-// An empty or unknown Provider is an error; it never falls back to local delivery.
-// Config must not be nil. New snapshots its values and does not retain config.
-func New(config *Config) (*Mailer, error) {
-	if config == nil {
-		return nil, errors.New("pigeon: config is nil")
+// New validates the options for provider and creates a reusable mailer without
+// network I/O. An empty or unknown provider is an error; it never falls back to
+// local delivery. Cloud providers require their provider option (WithSES,
+// WithResend, WithMailgun or WithSendGrid); provider options for another
+// provider, nil options, and HTTP options with ProviderLocal are rejected.
+// Pigeon never reads environment variables.
+func New(kind Provider, opts ...Option) (*Mailer, error) {
+	config, err := resolveOptions(kind, opts)
+	if err != nil {
+		return nil, err
 	}
 	maxBytes, err := resolveMessageBytes(config.Provider, config.MaxMessageBytes)
 	if err != nil {
@@ -128,7 +128,7 @@ func New(config *Config) (*Mailer, error) {
 
 // Send validates and synchronously submits one email, respecting ctx.
 // It rejects messages whose combined string bytes exceed the limit resolved
-// from Config.MaxMessageBytes.
+// from WithMaxMessageBytes.
 // It makes no automatic retries: a timeout can mean the provider accepted the
 // message but its response was lost. Retrying can send a duplicate.
 // The caller must not mutate email or its slices until Send returns. Afterward,

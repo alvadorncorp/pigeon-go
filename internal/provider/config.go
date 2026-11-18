@@ -14,9 +14,10 @@ const (
 	Local    Kind = "local"
 )
 
-// Config configures a mailer once. Only fields relevant to Provider are read.
-// Credentials are explicit snapshots; Pigeon does not read environment variables
-// or refresh temporary AWS credentials. Keep Config out of logs.
+// Config is the resolved mailer configuration that pigeon.New builds from its
+// options. Only fields relevant to Provider are read. Credentials are explicit
+// snapshots; Pigeon does not read environment variables or refresh temporary
+// AWS credentials. Keep Config out of logs.
 type Config struct {
 	Provider Kind
 	// APIKey authenticates Resend, Mailgun or SendGrid.
