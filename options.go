@@ -30,10 +30,24 @@ func (o *options) target(kind Provider) {
 
 // AWSCredentials is a fixed snapshot of AWS credentials for SES. SessionToken
 // is optional. Pigeon does not discover or refresh credentials.
+//
+// String and GoString never include any field value, so formatting the struct
+// with %v, %+v or %#v cannot leak the secret access key, the session token, or
+// the access key ID into logs.
 type AWSCredentials struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	SessionToken    string
+}
+
+// String reports a placeholder without any credential value.
+func (c AWSCredentials) String() string {
+	return "AWSCredentials{redacted}"
+}
+
+// GoString reports a placeholder without any credential value.
+func (c AWSCredentials) GoString() string {
+	return "pigeon.AWSCredentials{redacted}"
 }
 
 // LocalLimits bounds the local development inbox. A zero Capacity selects 100
