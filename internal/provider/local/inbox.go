@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ type localMessage struct {
 type LocalInbox struct {
 	mu                  sync.RWMutex
 	messages            []localMessage
+	capacity            int
 	start, count, bytes int
 	maxBytes            int
 	next                uint64
@@ -48,18 +50,13 @@ func New(cfg *provider.Config) (*LocalInbox, error) {
 	if maxBytes == 0 {
 		maxBytes = localDefaultMaxBytes
 	}
-	return &LocalInbox{messages: make([]localMessage, capacity), maxBytes: maxBytes}, nil
+	// The ring grows on demand, so a large capacity costs nothing until used.
+	return &LocalInbox{capacity: capacity, maxBytes: maxBytes}, nil
 }
 
 // Send stores a snapshot of the email and returns its local, monotonic ID.
 // The caller must not mutate the email until Send returns.
 func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (message.Receipt, error) {
-	if err := ctx.Err(); err != nil {
-		return message.Receipt{}, err
-	}
-	if email == nil {
-		return message.Receipt{}, fmt.Errorf("local email is nil")
-	}
 	size := message.Size(email)
 	if size > inbox.maxBytes {
 		return message.Receipt{}, fmt.Errorf("local email exceeds %d byte retention limit", inbox.maxBytes)
@@ -79,7 +76,7 @@ func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (messag
 	if err := ctx.Err(); err != nil {
 		return message.Receipt{}, err
 	}
-	for inbox.count > 0 && (inbox.count == len(inbox.messages) || size > inbox.maxBytes-inbox.bytes) {
+	for inbox.count > 0 && (inbox.count == inbox.capacity || size > inbox.maxBytes-inbox.bytes) {
 		old := &inbox.messages[inbox.start]
 		inbox.bytes -= old.size
 		*old = localMessage{}
@@ -88,8 +85,21 @@ func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (messag
 	}
 	inbox.next++
 	id := strconv.FormatUint(inbox.next, 10)
-	index := (inbox.start + inbox.count) % len(inbox.messages)
-	inbox.messages[index] = localMessage{ID: id, Email: copyEmail, size: size}
+	stored := localMessage{ID: id, Email: copyEmail, size: size}
+	switch {
+	case inbox.count < len(inbox.messages):
+		inbox.messages[(inbox.start+inbox.count)%len(inbox.messages)] = stored
+	case inbox.start == 0:
+		inbox.messages = append(inbox.messages, stored)
+	default:
+		// Byte eviction moved start before the ring reached capacity: unwrap it.
+		inbox.messages = slices.Concat(
+			inbox.messages[inbox.start:],
+			inbox.messages[:inbox.start],
+			[]localMessage{stored},
+		)
+		inbox.start = 0
+	}
 	inbox.count++
 	inbox.bytes += size
 	return message.Receipt{ID: id}, nil

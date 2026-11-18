@@ -27,11 +27,11 @@ mux := http.NewServeMux()
 mux.Handle("/mail/", http.StripPrefix("/mail", mailer.Inbox()))
 ```
 
-`Inbox()` returns a read-only `http.Handler` for a local mailer and `nil` for a cloud mailer. The library does not start a server or receive SMTP. The handler shows the real messages sent to its own mailer instance in the same process. Message URLs can be opened directly by ID (for example, `/mail/<id>` with the mount above); `http.StripPrefix` keeps inbox links and previews working under the chosen prefix.
+`Inbox()` returns a read-only `http.Handler` for a local mailer and a handler that answers 404 for a cloud mailer; it is never nil. The library does not start a server or receive SMTP. The handler shows the real messages sent to its own mailer instance in the same process. Message URLs can be opened directly by ID (for example, `/mail/<id>` with the mount above); `http.StripPrefix` keeps inbox links and previews working under the chosen prefix.
 
 ## Retention
 
-By default the inbox retains up to 100 messages and 16 MiB of message content. Pass `WithLocal(LocalLimits{Capacity, MaxBytes})` to override these independent limits; zero selects the default and negative values are invalid. Oldest messages are evicted first. A message exceeding either the `WithMaxMessageBytes` limit or the whole inbox byte budget is rejected. These limits are not process heap limits. Data disappears when the process stops.
+By default the inbox retains up to 100 messages and 16 MiB of message content. Pass `WithLocal(LocalLimits{Capacity, MaxBytes})` to override these independent limits; zero selects the default and negative values are invalid. Slots are allocated as messages arrive, so a large `Capacity` costs nothing up front. Oldest messages are evicted first. A message exceeding either the `WithMaxMessageBytes` limit or the whole inbox byte budget is rejected. These limits are not process heap limits. Data disappears when the process stops.
 
 The queue and browser title abbreviate subjects after 120 Unicode code points. The selected message shows the full subject.
 
@@ -39,4 +39,6 @@ The queue and browser title abbreviate subjects after 120 Unicode code points. T
 
 Keep the inbox on a trusted development server. It has no authentication and displays email contents, recipients, Bcc, and any private links inside messages. The example binds only to loopback. HTML previews run in a sandbox with remote resources blocked, so they can look different from a real mail client.
 
-HTML bodies are available only inside the inbox's protected iframe. Opening a raw preview URL directly returns `403`. The preview requires a browser that sends Fetch Metadata headers (`Sec-Fetch-Dest`).
+The handler answers only requests whose `Host` is an IP literal, `localhost`, or a `*.localhost` name; any other hostname gets `403`. This blocks DNS rebinding, where an attacker's domain is pointed at 127.0.0.1 to read a loopback server. Reach the inbox through `localhost`, `*.localhost`, or an IP address, not a custom development domain.
+
+HTML bodies are available only inside the inbox's protected iframe. Opening a stored message's raw preview URL directly returns `403`. The preview requires a browser that sends Fetch Metadata headers (`Sec-Fetch-Dest`).

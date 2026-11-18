@@ -2,6 +2,7 @@ package local
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -40,13 +41,18 @@ func abbreviate(subject string) string {
 	return subject
 }
 
-// ServeHTTP serves a read-only development inbox. Mount it with StripPrefix;
-// the stripped prefix should end at the inbox root, including its trailing slash.
+// ServeHTTP serves a read-only development inbox. Mount it with StripPrefix
+// at the inbox root, for example http.StripPrefix("/mail", inbox) on "/mail/".
 func (inbox *LocalInbox) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; "+
 		"img-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	if !localHost(r.Host) {
+		// DNS rebinding reaches a loopback server through an attacker's hostname.
+		http.Error(w, "the inbox accepts only IP or localhost hosts", http.StatusForbidden)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -57,7 +63,7 @@ func (inbox *LocalInbox) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, suffix, hasSuffix := strings.Cut(path, "/")
-	if hasSuffix && (id == "" || suffix != "html") {
+	if hasSuffix && suffix != "html" {
 		http.NotFound(w, r)
 		return
 	}
@@ -66,6 +72,16 @@ func (inbox *LocalInbox) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inbox.servePage(w, r, id)
+}
+
+// localHost reports whether host names this machine in a way an attacker's
+// DNS cannot: an IP literal, localhost, or a *.localhost name.
+func localHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return net.ParseIP(strings.Trim(host, "[]")) != nil || host == "localhost" || strings.HasSuffix(host, ".localhost")
 }
 
 func serveLocalAsset(w http.ResponseWriter, r *http.Request, path string) bool {

@@ -10,6 +10,7 @@ import (
 func localTestRequest(handler http.Handler, method, path string, destination ...string) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, path, http.NoBody)
+	request.Host = "127.0.0.1:8025"
 	if len(destination) > 0 {
 		request.Header.Set("Sec-Fetch-Dest", destination[0])
 	}
@@ -355,7 +356,9 @@ func checkLocalAssetHeaders(t *testing.T, get *httptest.ResponseRecorder) {
 			t.Errorf("%s = %q, want %q", header.name, got, header.value)
 		}
 	}
-	for _, directive := range []string{"default-src 'none'", "script-src 'self'", "frame-ancestors 'none'"} {
+	for _, directive := range []string{
+		"default-src 'none'", "script-src 'self'", "frame-src 'self'", "frame-ancestors 'none'",
+	} {
 		if !strings.Contains(get.Header().Get("Content-Security-Policy"), directive) {
 			t.Errorf("CSP missing %q: %q", directive, get.Header().Get("Content-Security-Policy"))
 		}

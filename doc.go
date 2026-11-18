@@ -18,8 +18,9 @@
 // With ProviderLocal, Send retains a bounded in-memory snapshot. Mailer.Inbox
 // exposes an http.Handler for viewing those messages. Serve it only in trusted
 // development environments; it has no authentication and loses all messages
-// when the process exits. HTML previews are sandboxed and remote resources are
+// when the process exits. It answers only IP-literal and localhost hosts, which
+// blocks DNS rebinding. HTML previews are sandboxed and remote resources are
 // blocked, so their appearance can differ from a real email client. The raw HTML
-// route is iframe-only and requires browser Fetch Metadata headers; opening it
-// directly returns HTTP 403.
+// route is iframe-only and requires browser Fetch Metadata headers; opening a
+// stored message's preview directly returns HTTP 403.
 package pigeon

@@ -2,8 +2,11 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -223,11 +226,8 @@ func TestLocalErrors(t *testing.T) {
 	inbox := localTestInbox(t, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := inbox.Send(ctx, localTestEmail("cancelled")); err != context.Canceled {
+	if _, err := inbox.Send(ctx, localTestEmail("cancelled")); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled send: %v", err)
-	}
-	if _, err := inbox.Send(t.Context(), nil); err == nil {
-		t.Fatal("nil email accepted")
 	}
 	empty := localTestRequest(inbox, http.MethodGet, "/")
 	if empty.Code != http.StatusOK || strings.Contains(empty.Body.String(), `<iframe`) {
@@ -235,6 +235,71 @@ func TestLocalErrors(t *testing.T) {
 	}
 	if got := localTestRequest(inbox, http.MethodGet, "/1").Code; got != http.StatusNotFound {
 		t.Fatalf("empty inbox detail status = %d, want 404", got)
+	}
+}
+
+func TestLocalHugeCapacityIsLazy(t *testing.T) {
+	inbox, err := New(&provider.Config{LocalCapacity: math.MaxInt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inbox.Send(t.Context(), localTestEmail("one")); err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox.messages) != 1 {
+		t.Fatalf("ring holds %d slots, want 1", len(inbox.messages))
+	}
+}
+
+func TestLocalRingUnwrapsAfterByteEviction(t *testing.T) {
+	// Subjects pad each email to exactly 2u or 1u bytes, with a 3u budget.
+	const unit = 100
+	padded := func(size int) *message.Email {
+		email := localTestEmail("")
+		email.Subject = strings.Repeat("x", size-message.Size(email))
+		return email
+	}
+	inbox, err := New(&provider.Config{LocalCapacity: 10, LocalMaxBytes: 3 * unit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The third send evicts the 2u email by bytes, moving start below capacity;
+	// the fourth fills that ring and must unwrap it before growing.
+	for _, size := range []int{2 * unit, unit, unit, unit} {
+		if _, err := inbox.Send(t.Context(), padded(size)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page := inbox.pageSnapshot("")
+	var ids []string
+	for _, summary := range page.Messages {
+		ids = append(ids, summary.ID)
+	}
+	if strings.Join(ids, ",") != "4,3,2" || len(inbox.messages) != 3 || inbox.start != 0 {
+		t.Fatalf(
+			"ids = %v, slots = %d, start = %d; want 4,3,2 in 3 slots from 0",
+			ids,
+			len(inbox.messages),
+			inbox.start,
+		)
+	}
+}
+
+func TestLocalRejectsForeignHost(t *testing.T) {
+	inbox := localTestInbox(t, 1)
+	for host, want := range map[string]int{
+		"evil.example:8025": http.StatusForbidden, "127.0.0.1.nip.io": http.StatusForbidden,
+		"localhost.evil.com": http.StatusForbidden, "evillocalhost": http.StatusForbidden, "": http.StatusForbidden,
+		"127.0.0.1:8025": http.StatusOK, "[::1]:8025": http.StatusOK,
+		"localhost:8025": http.StatusOK, "app.localhost": http.StatusOK, "192.168.1.10": http.StatusOK,
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		request.Host = host
+		recorder := httptest.NewRecorder()
+		inbox.ServeHTTP(recorder, request)
+		if recorder.Code != want {
+			t.Errorf("host %q: status = %d, want %d", host, recorder.Code, want)
+		}
 	}
 }
 
