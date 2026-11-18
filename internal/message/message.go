@@ -82,15 +82,8 @@ func AddressStrings(addresses []Address) []string {
 // From, ReplyTo and all recipients. It saturates instead of overflowing.
 // Validate the email first; Size walks every recipient list it is given.
 func Size(email *Email) int {
-	const maxInt = int(^uint(0) >> 1)
 	total := 0
-	add := func(s string) {
-		if piece := len(s); maxInt-total >= piece {
-			total += piece
-		} else {
-			total = maxInt
-		}
-	}
+	add := func(s string) { total = addSaturating(total, len(s)) }
 	address := func(a Address) { add(a.Name); add(a.Email) }
 	address(email.From)
 	address(email.ReplyTo)
@@ -103,6 +96,15 @@ func Size(email *Email) int {
 		}
 	}
 	return total
+}
+
+// addSaturating returns total + n, saturating at MaxInt instead of overflowing.
+func addSaturating(total, n int) int {
+	const maxInt = int(^uint(0) >> 1)
+	if maxInt-total >= n {
+		return total + n
+	}
+	return maxInt
 }
 
 // Validate enforces the portable message contract before any provider is called.

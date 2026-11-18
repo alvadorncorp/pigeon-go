@@ -59,6 +59,16 @@ func TestNewRejectsInvalidOptions(t *testing.T) {
 			kind: pigeon.ProviderLocal,
 			opts: []pigeon.Option{pigeon.WithHTTPClient(&http.Client{})},
 		},
+		{
+			name: "local with negative capacity",
+			kind: pigeon.ProviderLocal,
+			opts: []pigeon.Option{pigeon.WithLocal(pigeon.LocalLimits{Capacity: -1})},
+		},
+		{
+			name: "local with negative MaxBytes",
+			kind: pigeon.ProviderLocal,
+			opts: []pigeon.Option{pigeon.WithLocal(pigeon.LocalLimits{MaxBytes: -1})},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

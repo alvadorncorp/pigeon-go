@@ -2,6 +2,8 @@ package message
 
 import (
 	"fmt"
+	"math"
+	"net/mail"
 	"strings"
 	"testing"
 )
@@ -93,6 +95,10 @@ func TestValidateRejectsRepeatedRecipients(t *testing.T) {
 		"to and bcc":       func(e *Email) { e.Bcc = []Address{{Email: "reader@example.com"}} },
 		"twice in to":      func(e *Email) { e.To = append(e.To, Address{Email: "reader@example.com"}) },
 		"case-insensitive": func(e *Email) { e.Cc = []Address{{Email: "READER@example.com"}} },
+		"cc and bcc": func(e *Email) {
+			e.Cc = []Address{{Email: "extra@example.com"}}
+			e.Bcc = []Address{{Email: "extra@example.com"}}
+		},
 	} {
 		e := validEmail()
 		edit(&e)
@@ -102,29 +108,76 @@ func TestValidateRejectsRepeatedRecipients(t *testing.T) {
 	}
 }
 
-func TestValidateAddressHostnameRules(t *testing.T) {
-	accepted := []string{
+// Addresses at the validator's acceptance boundary. The 254-byte case is the
+// longest accepted address: its local part and every domain label sit at their
+// own limits, so only the total-length rule decides it. The 255-byte case is
+// rejected by that rule alone.
+var (
+	addressAcceptCases = []string{
 		"sender@example.com", "FIRST.Last+tag@sub.example.com", "!#$%&'*+-/=?^_`{|}~@example.com",
 		"user@xn--bcher-kva.example", strings.Repeat("a", 64) + "@example.com",
 		"user@" + strings.Repeat("a", 63) + ".com",
+		strings.Repeat("a", 64) + "@" + strings.Repeat("a", 63) + "." +
+			strings.Repeat("a", 63) + "." + strings.Repeat("a", 61),
 	}
-	rejected := []string{
+	addressRejectCases = []string{
 		`"quoted"@example.com`, "user@[127.0.0.1]", ".user@example.com", "user.@example.com", "u..ser@example.com",
 		"user@.example.com", "user@example.com.", "user@example..com", "user@-example.com", "user@example-.com",
 		"user@example_domain.com", "user@ex!ample.com", "user@@example.com", "@example.com", "user@",
 		"Ada <ada@example.com>", "user@example.com\r\nBcc: victim@example.com", "josé@example.com",
 		"user@bücher.de", "user@example.com\x00", "", strings.Repeat("a", 65) + "@example.com",
 		"user@" + strings.Repeat("a", 64) + ".com", "a@" + strings.Repeat("a", 253),
+		strings.Repeat("a", 64) + "@" + strings.Repeat("a", 63) + "." +
+			strings.Repeat("a", 63) + "." + strings.Repeat("a", 62),
 	}
-	for _, address := range accepted {
+)
+
+func TestValidateAddressHostnameRules(t *testing.T) {
+	for _, address := range addressAcceptCases {
 		if !validAddress(Address{Email: address}) {
 			t.Errorf("rejected valid address %q", address)
 		}
 	}
-	for _, address := range rejected {
+	for _, address := range addressRejectCases {
 		if validAddress(Address{Email: address}) {
 			t.Errorf("accepted invalid address %q", address)
 		}
+	}
+}
+
+// FuzzValidateAddress explores validAddress, seeded with the boundary cases
+// above.
+func FuzzValidateAddress(f *testing.F) {
+	for _, address := range addressAcceptCases {
+		f.Add(address)
+	}
+	for _, address := range addressRejectCases {
+		f.Add(address)
+	}
+	f.Fuzz(func(t *testing.T, address string) {
+		if !validAddress(Address{Email: address}) {
+			return
+		}
+		assertPortableAddress(t, address)
+	})
+}
+
+// assertPortableAddress checks that an accepted address stays within the
+// portable subset: no space or control bytes, and net/mail must parse the
+// same addr-spec back out of it.
+func assertPortableAddress(t *testing.T, address string) {
+	t.Helper()
+	for i := range len(address) {
+		if c := address[i]; c <= ' ' || c == 127 {
+			t.Fatalf("accepted address %q contains byte %#02x", address, c)
+		}
+	}
+	parsed, err := mail.ParseAddress(address)
+	if err != nil {
+		t.Fatalf("net/mail rejected an accepted address %q: %v", address, err)
+	}
+	if parsed.Address != address {
+		t.Fatalf("net/mail parsed addr-spec %q from %q", parsed.Address, address)
 	}
 }
 
@@ -141,6 +194,21 @@ func TestSizeCountsEveryString(t *testing.T) {
 	}
 	if got := Size(email); got != 121 {
 		t.Errorf("Size = %d, want 121", got)
+	}
+}
+
+func TestSizeSaturatesInsteadOfOverflowing(t *testing.T) {
+	for _, tc := range []struct{ total, piece, want int }{
+		{0, 5, 5},
+		{math.MaxInt, 0, math.MaxInt},
+		{math.MaxInt, 7, math.MaxInt},
+		{math.MaxInt - 1, 1, math.MaxInt},
+		{math.MaxInt - 1, 2, math.MaxInt},
+		{math.MaxInt - 5, 3, math.MaxInt - 2},
+	} {
+		if got := addSaturating(tc.total, tc.piece); got != tc.want {
+			t.Errorf("addSaturating(%d, %d) = %d, want %d", tc.total, tc.piece, got, tc.want)
+		}
 	}
 }
 
