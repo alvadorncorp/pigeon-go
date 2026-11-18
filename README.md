@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/pigeon.svg" width="240" alt="Pigeon, a cheerful carrier pigeon holding a letter">
+  <img src="docs/assets/pigeon.svg" width="240" alt="Pigeon">
 </p>
 
 # Pigeon

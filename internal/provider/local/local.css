@@ -42,9 +42,8 @@ img { max-width: 100%; }
   background: var(--c-green);
   color: #f5f8f3;
 }
-.v-c .pigeon-brand { display: inline-flex; align-items: center; gap: .625rem; font-size: 1.625rem; font-weight: 650; letter-spacing: -.035em; }
-.v-c .pigeon-brand img { width: 2.25rem; height: 2.25rem; padding: .25rem; background: #edf2e9; border-radius: .5rem; }
-.v-c .brand-dot { color: #b8d2af; }
+.v-c .pigeon-brand { display: inline-flex; align-items: center; gap: .625rem; font: 700 1.625rem "Helvetica Neue", Arial, sans-serif; letter-spacing: -.04em; }
+.v-c .pigeon-brand img { width: 2.25rem; height: 2.25rem; padding: .25rem; background: #faf8f3; border-radius: .5rem; }
 .v-c .c-header-description { padding-left: 1.75rem; border-left: .0625rem solid #648071; font-size: .875rem; color: #d8e4d8; }
 .v-c .c-readonly { display: inline-flex; align-items: center; gap: .5rem; margin-left: auto; font-size: .8125rem; color: #d8e4d8; }
 .v-c .c-workspace { width: 100%; max-width: 90rem; margin-inline: auto; padding: 1.25rem 2.5rem 3rem; }
