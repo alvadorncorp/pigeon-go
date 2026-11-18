@@ -1,7 +1,7 @@
 package message
 
 import (
-	"net/mail"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -60,55 +60,88 @@ func TestValidatePortableBoundary(t *testing.T) {
 	e.ReplyTo = Address{Email: "help+letters@example.com"}
 	e.Bcc = make([]Address, 49)
 	for i := range e.Bcc {
-		e.Bcc[i] = Address{Email: "copy@example.com"}
+		e.Bcc[i] = Address{Email: fmt.Sprintf("copy%d@example.com", i)}
 	}
 	if err := Validate(&e); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestValidateAddressMatchesOriginalParser(t *testing.T) {
-	addresses := []string{
-		"sender@example.com", "FIRST.Last+tag@sub.example.com",
-		"!#$%&'*+-/=?^_`{|}~@example.com",
-		`"quoted"@example.com`, `"a.b"@example.com`, "user@[127.0.0.1]",
-		".user@example.com", "user.@example.com", "u..ser@example.com",
-		"user@.example.com", "user@example.com.", "user@example..com",
-		"user@-example.com", "user@example-.com", "user@example_domain.com",
-		"user@example", "user@@example.com", "@example.com", "user@",
-		"Ada <ada@example.com>", "user@example.com\r\nBcc: victim@example.com",
-		"josé@example.com", "user@example.com\x00", "",
-		strings.Repeat("a", 64) + "@example.com",
-		strings.Repeat("a", 65) + "@example.com",
-		"user@" + strings.Repeat("a", 63) + ".com",
-		"user@" + strings.Repeat("a", 64) + ".com",
-		"a@" + strings.Repeat("a", 252), "a@" + strings.Repeat("a", 253),
+func recipients(prefix string, n int) []Address {
+	list := make([]Address, n)
+	for i := range list {
+		list[i] = Address{Email: fmt.Sprintf("%s%d@example.com", prefix, i)}
 	}
-	for c := byte(33); c < 127; c++ {
-		addresses = append(addresses, "a"+string(c)+"b@example.com", "a@ex"+string(c)+"ample.com")
-	}
-	for _, address := range addresses {
-		t.Run(address, func(t *testing.T) {
-			want := originalAddressAccepted(address)
-			e := validEmail()
-			e.From.Email = address
-			if got := Validate(&e) == nil; got != want {
-				t.Errorf("Validate(from=%q) accepted = %v, original parser accepted = %v", address, got, want)
-			}
-		})
+	return list
+}
+
+func TestValidateCombinedRecipientLimit(t *testing.T) {
+	for _, tc := range []struct {
+		to, cc, bcc int
+		ok          bool
+	}{{1, 25, 24, true}, {1, 25, 25, false}, {50, 0, 0, true}, {51, 0, 0, false}, {1, 50, 0, false}} {
+		e := validEmail()
+		e.To, e.Cc, e.Bcc = recipients("to", tc.to), recipients("cc", tc.cc), recipients("bcc", tc.bcc)
+		if got := Validate(&e) == nil; got != tc.ok {
+			t.Errorf("to=%d cc=%d bcc=%d accepted = %v, want %v", tc.to, tc.cc, tc.bcc, got, tc.ok)
+		}
 	}
 }
 
-func originalAddressAccepted(address string) bool {
-	local, domain, ok := strings.CutLast(address, "@")
-	want := address != "" && len(address) <= 254 && ok && local != "" && len(local) <= 64 && domain != ""
-	for i := range len(address) {
-		if address[i] <= ' ' || address[i] >= 127 {
-			want = false
+func TestValidateRejectsRepeatedRecipients(t *testing.T) {
+	for name, edit := range map[string]func(*Email){
+		"to and bcc":       func(e *Email) { e.Bcc = []Address{{Email: "reader@example.com"}} },
+		"twice in to":      func(e *Email) { e.To = append(e.To, Address{Email: "reader@example.com"}) },
+		"case-insensitive": func(e *Email) { e.Cc = []Address{{Email: "READER@example.com"}} },
+	} {
+		e := validEmail()
+		edit(&e)
+		if Validate(&e) == nil {
+			t.Errorf("%s: repeated recipient accepted", name)
 		}
 	}
-	parsed, err := mail.ParseAddress(address)
-	return want && err == nil && parsed.Name == "" && parsed.Address == address
+}
+
+func TestValidateAddressHostnameRules(t *testing.T) {
+	accepted := []string{
+		"sender@example.com", "FIRST.Last+tag@sub.example.com", "!#$%&'*+-/=?^_`{|}~@example.com",
+		"user@xn--bcher-kva.example", strings.Repeat("a", 64) + "@example.com",
+		"user@" + strings.Repeat("a", 63) + ".com",
+	}
+	rejected := []string{
+		`"quoted"@example.com`, "user@[127.0.0.1]", ".user@example.com", "user.@example.com", "u..ser@example.com",
+		"user@.example.com", "user@example.com.", "user@example..com", "user@-example.com", "user@example-.com",
+		"user@example_domain.com", "user@ex!ample.com", "user@@example.com", "@example.com", "user@",
+		"Ada <ada@example.com>", "user@example.com\r\nBcc: victim@example.com", "josé@example.com",
+		"user@bücher.de", "user@example.com\x00", "", strings.Repeat("a", 65) + "@example.com",
+		"user@" + strings.Repeat("a", 64) + ".com", "a@" + strings.Repeat("a", 253),
+	}
+	for _, address := range accepted {
+		if !validAddress(Address{Email: address}) {
+			t.Errorf("rejected valid address %q", address)
+		}
+	}
+	for _, address := range rejected {
+		if validAddress(Address{Email: address}) {
+			t.Errorf("accepted invalid address %q", address)
+		}
+	}
+}
+
+func TestSizeCountsEveryString(t *testing.T) {
+	email := &Email{
+		From:    Address{Name: "Sender", Email: "sender@example.com"},                       // 6 + 18
+		To:      []Address{{Email: "a@example.com"}, {Name: "Bee", Email: "b@example.com"}}, // 13 + 3 + 13
+		Cc:      []Address{{Email: "c@example.com"}},                                        // 13
+		Bcc:     []Address{{Email: "d@example.com"}},                                        // 13
+		ReplyTo: Address{Name: "Reply", Email: "reply@example.com"},                         // 5 + 17
+		Subject: "Hello",                                                                    // 5
+		Text:    "text",                                                                     // 4
+		HTML:    "<p>html</p>",                                                              // 11
+	}
+	if got := Size(email); got != 121 {
+		t.Errorf("Size = %d, want 121", got)
+	}
 }
 
 func BenchmarkValidate(b *testing.B) {

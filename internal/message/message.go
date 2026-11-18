@@ -10,11 +10,14 @@ import (
 	"unicode/utf8"
 )
 
+// maxRecipients keeps one message within SES's per-message recipient limit.
+const maxRecipients = 50
+
 // Address is an ASCII email address with an optional Unicode display name.
 // Email must contain only the addr-spec, such as ada@example.com.
 type Address struct {
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email"`
+	Name  string
+	Email string
 }
 
 // String formats the address for a mail header.
@@ -108,7 +111,7 @@ func Validate(email *Email) error {
 	if len(email.To) == 0 {
 		return errors.New("pigeon: at least one to recipient is required")
 	}
-	if len(email.To) > 50 || len(email.Cc) > 50-len(email.To) || len(email.Bcc) > 50-len(email.To)-len(email.Cc) {
+	if len(email.To)+len(email.Cc)+len(email.Bcc) > maxRecipients {
 		return errors.New("pigeon: at most 50 recipients are allowed")
 	}
 	if !validAddress(email.From) {
@@ -136,15 +139,38 @@ func validateContent(email *Email) error {
 	return nil
 }
 
+// validateRecipients rejects invalid recipients and any address repeated across
+// To, Cc and Bcc, which SendGrid refuses with HTTP 400.
 func validateRecipients(email *Email) error {
-	for _, recipients := range [...][]Address{email.To, email.Cc, email.Bcc} {
+	groups := [...][]Address{email.To, email.Cc, email.Bcc}
+	for g, recipients := range groups {
 		for i, address := range recipients {
 			if !validAddress(address) {
 				return fmt.Errorf("pigeon: invalid recipient at index %d", i)
 			}
+			if seenBefore(groups[:g+1], g, i, address.Email) {
+				return fmt.Errorf("pigeon: recipient at index %d repeats an address", i)
+			}
 		}
 	}
 	return nil
+}
+
+// seenBefore reports whether email occurs, case-insensitively, before position
+// i of groups[g]. It allocates nothing; with at most 50 recipients a quadratic
+// scan is cheaper than a map.
+func seenBefore(groups [][]Address, g, i int, email string) bool {
+	for earlier, previous := range groups {
+		if earlier == g {
+			previous = previous[:i]
+		}
+		for _, other := range previous {
+			if strings.EqualFold(other.Email, email) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validHeader(s string) bool {
@@ -163,23 +189,10 @@ func validAddress(a Address) bool {
 	if a.Email == "" || len(a.Email) > 254 || !validHeader(a.Name) {
 		return false
 	}
-	for i := range len(a.Email) {
-		if a.Email[i] <= ' ' || a.Email[i] >= 127 {
-			return false
-		}
-	}
 	local, domain, ok := strings.CutLast(a.Email, "@")
 	if !ok || local == "" || len(local) > 64 || domain == "" {
 		return false
 	}
-	if simpleAddress(local, domain) {
-		return true
-	}
-	parsed, err := mail.ParseAddress(a.Email)
-	return err == nil && parsed.Name == "" && parsed.Address == a.Email
-}
-
-func simpleAddress(local, domain string) bool {
 	return simpleLocal(local) && simpleDomain(domain)
 }
 
