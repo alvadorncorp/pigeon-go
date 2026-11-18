@@ -91,15 +91,101 @@ func TestLocalByteBudgetAndOversized(t *testing.T) {
 		t.Fatalf("byte eviction status = %d", got)
 	}
 	oversized := localTestEmail("oversized")
-	oversized.From.Name = strings.Repeat("x", localBudget)
+	oversized.From.Name = strings.Repeat("x", localDefaultMaxBytes)
 	if _, err := inbox.Send(t.Context(), oversized); err == nil {
 		t.Fatal("oversized message accepted")
 	}
 	if got := localTestRequest(inbox, http.MethodGet, "/"+second.ID).Code; got != http.StatusOK {
 		t.Fatalf("rejection evicted existing message: %d", got)
 	}
-	if inbox.bytes > localBudget || inbox.count != 1 {
+	if inbox.bytes > localDefaultMaxBytes || inbox.count != 1 {
 		t.Fatalf("retention invariant: bytes=%d count=%d", inbox.bytes, inbox.count)
+	}
+}
+
+func TestLocalMaxBytesConfig(t *testing.T) {
+	if _, err := New(&provider.Config{LocalMaxBytes: -1}); err == nil {
+		t.Fatal("negative LocalMaxBytes accepted")
+	}
+	defaultInbox, err := New(&provider.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultInbox.maxBytes != localDefaultMaxBytes {
+		t.Fatalf("default maxBytes = %d, want %d", defaultInbox.maxBytes, localDefaultMaxBytes)
+	}
+}
+
+func TestLocalCustomMaxBytesBudget(t *testing.T) {
+	const retainedCount = 2
+	fits := localTestEmail("fits")
+	budget := retainedCount * message.Size(fits)
+	inbox, err := New(&provider.Config{LocalCapacity: retainedCount + 1, LocalMaxBytes: budget})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := inbox.Send(t.Context(), fits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := inbox.Send(t.Context(), fits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inbox.bytes != budget {
+		t.Fatalf("bytes = %d, want %d", inbox.bytes, budget)
+	}
+	if _, err := inbox.Send(t.Context(), fits); err != nil {
+		t.Fatal(err)
+	}
+	if got := localTestRequest(inbox, http.MethodGet, "/"+first.ID).Code; got != http.StatusNotFound {
+		t.Fatalf("custom budget eviction status = %d", got)
+	}
+	if got := localTestRequest(inbox, http.MethodGet, "/"+second.ID).Code; got != http.StatusOK {
+		t.Fatalf("survivor status = %d", got)
+	}
+	if inbox.bytes != budget || inbox.count != retainedCount {
+		t.Fatalf("retention invariant: bytes=%d count=%d", inbox.bytes, inbox.count)
+	}
+	oversized := localTestEmail("oversized")
+	oversized.Subject = strings.Repeat("x", budget+1)
+	if _, err := inbox.Send(t.Context(), oversized); err == nil {
+		t.Fatal("oversized message accepted")
+	}
+	if inbox.bytes != budget || inbox.count != retainedCount {
+		t.Fatalf("rejection changed retention: bytes=%d count=%d", inbox.bytes, inbox.count)
+	}
+	exact := localTestEmail("exact")
+	exact.Text = ""
+	exact.Text = strings.Repeat("x", budget-message.Size(exact))
+	if _, err := inbox.Send(t.Context(), exact); err != nil {
+		t.Fatalf("exact-fit message rejected: %v", err)
+	}
+	if inbox.bytes != budget || inbox.count != 1 {
+		t.Fatalf("exact-fit invariant: bytes=%d count=%d", inbox.bytes, inbox.count)
+	}
+}
+
+func TestLocalSnapshotOwnsStrings(t *testing.T) {
+	inbox := localTestInbox(t, 1)
+	email := localTestEmail("subject")
+	sent, err := inbox.Send(t.Context(), email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := localTestRequest(inbox, http.MethodGet, "/"+sent.ID)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "subject") {
+		t.Fatalf("snapshot detail: status=%d body=%s", page.Code, page.Body.String())
+	}
+	email.From.Name = "changed"
+	email.From.Email = "changed@example.com"
+	email.To[0].Name = "changed"
+	email.Subject = "changed"
+	email.Text = "changed"
+	email.HTML = "changed"
+	if page := localTestRequest(inbox, http.MethodGet, "/"+sent.ID); page.Code != http.StatusOK ||
+		strings.Contains(page.Body.String(), "changed") {
+		t.Fatalf("snapshot mutated: body=%s", page.Body.String())
 	}
 }
 
@@ -112,7 +198,7 @@ func TestLocalConcurrentSendAndRead(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if inbox.count != 20 || inbox.bytes > localBudget || inbox.next != 400 {
+	if inbox.count != 20 || inbox.bytes > localDefaultMaxBytes || inbox.next != 400 {
 		t.Fatalf("retention after concurrency: count=%d bytes=%d next=%d", inbox.count, inbox.bytes, inbox.next)
 	}
 }

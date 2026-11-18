@@ -41,7 +41,7 @@ Success is `202 Accepted` with no required response body. [X-Message-ID](https:/
 
 The parent inbox's `frame-src 'self'` policy also blocks navigation to another origin. A sandbox alone does not prevent every kind of navigation: a direct visit to the raw HTML endpoint can follow a link without that parent policy. The endpoint therefore accepts only iframe requests identified by `Sec-Fetch-Dest`; direct navigation and requests without that header receive `403`. The shell rejects framing, while previews allow only same-origin ancestors.
 
-The local inbox is a bounded, process-local sink. It clones recipient slices at submission, shares immutable strings, and protects its ring with a mutex. It releases the lock before rendering templates or writing to a browser. A count limit and byte budget prevent unlimited retained email data; they are not a process-wide heap limit.
+The local inbox owns its message snapshots and protects its ring with a mutex. It releases the lock before rendering templates or writing to a browser. A count limit and byte budget bound retained email content; they are not a process-wide heap limit.
 
 ## Scope and verification
 

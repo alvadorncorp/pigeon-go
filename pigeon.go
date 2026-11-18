@@ -48,11 +48,46 @@ type sender interface {
 	Send(context.Context, *message.Email) (message.Receipt, error)
 }
 
+// Per-message byte limits: the shared default and each cloud provider's
+// published cap. The local provider has no provider cap; its own retention
+// budget is enforced by the inbox.
+const (
+	defaultMessageBytes     = 1 << 20
+	mailgunMessageBytesCap  = 25_000_000
+	sendGridMessageBytesCap = 29_999_999
+	awsMessageBytesCap      = 40_000_000
+)
+
+// resolveMessageBytes applies the documented semantics of Config.MaxMessageBytes:
+// zero selects 1 MiB, a negative value is invalid, and cloud providers cap
+// larger values at their published limit. The local provider keeps the
+// configured value unchanged.
+func resolveMessageBytes(provider Provider, configured int) (int, error) {
+	if configured < 0 {
+		return 0, fmt.Errorf("pigeon: max message bytes must not be negative")
+	}
+	if configured == 0 {
+		configured = defaultMessageBytes
+		return configured, nil
+	}
+	switch provider {
+	case ProviderMailgun:
+		return min(configured, mailgunMessageBytesCap), nil
+	case ProviderSendGrid:
+		return min(configured, sendGridMessageBytesCap), nil
+	case ProviderSES, ProviderResend:
+		return min(configured, awsMessageBytesCap), nil
+	default:
+		return configured, nil
+	}
+}
+
 // Mailer sends email through one configured provider. It is safe for concurrent
 // use. Construct it with New; the zero value cannot send.
 type Mailer struct {
-	sender sender
-	inbox  http.Handler
+	sender   sender
+	inbox    http.Handler
+	maxBytes int
 }
 
 // New validates configuration and creates a reusable mailer without network I/O.
@@ -62,8 +97,11 @@ func New(config *Config) (*Mailer, error) {
 	if config == nil {
 		return nil, errors.New("pigeon: config is nil")
 	}
+	maxBytes, err := resolveMessageBytes(config.Provider, config.MaxMessageBytes)
+	if err != nil {
+		return nil, err
+	}
 	var backend sender
-	var err error
 	switch config.Provider {
 	case ProviderSES:
 		backend, err = aws.NewSES(config)
@@ -78,17 +116,19 @@ func New(config *Config) (*Mailer, error) {
 		if inboxErr != nil {
 			return nil, inboxErr
 		}
-		return &Mailer{sender: inbox, inbox: inbox}, nil
+		return &Mailer{sender: inbox, inbox: inbox, maxBytes: maxBytes}, nil
 	default:
 		return nil, fmt.Errorf("pigeon: unknown provider %q", config.Provider)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &Mailer{sender: backend}, nil
+	return &Mailer{sender: backend, maxBytes: maxBytes}, nil
 }
 
 // Send validates and synchronously submits one email, respecting ctx.
+// It rejects messages whose combined string bytes exceed the limit resolved
+// from Config.MaxMessageBytes.
 // It makes no automatic retries: a timeout can mean the provider accepted the
 // message but its response was lost. Retrying can send a duplicate.
 // The caller must not mutate email or its slices until Send returns. Afterward,
@@ -105,6 +145,9 @@ func (m *Mailer) Send(ctx context.Context, email *Email) (Receipt, error) {
 	}
 	if err := message.Validate(email); err != nil {
 		return Receipt{}, err
+	}
+	if size := message.Size(email); size > m.maxBytes {
+		return Receipt{}, fmt.Errorf("pigeon: message size %d bytes exceeds the configured limit of %d bytes", size, m.maxBytes)
 	}
 	return m.sender.Send(ctx, email)
 }

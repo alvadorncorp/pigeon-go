@@ -31,7 +31,9 @@ mux.Handle("/mail/", http.StripPrefix("/mail", mailer.Inbox()))
 
 ## Retention
 
-The inbox retains up to 100 messages by default and at most 16 MiB of message data, evicting the oldest messages when either limit is reached. Set `LocalCapacity` to change the message count. A single message larger than the byte limit is rejected. Data disappears when the process stops.
+By default the inbox retains up to 100 messages and 16 MiB of message content. Set `LocalCapacity` and `LocalMaxBytes` to override these independent limits. Oldest messages are evicted first. A message exceeding either `MaxMessageBytes` or the whole inbox byte budget is rejected. These limits are not process heap limits. Data disappears when the process stops.
+
+The queue and browser title abbreviate subjects after 120 Unicode code points. The selected message shows the full subject.
 
 ## Security
 

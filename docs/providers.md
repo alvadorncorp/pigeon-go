@@ -4,11 +4,13 @@ Only configuration changes between providers. Credentials are supplied by your a
 
 | Provider | Required configuration | Optional configuration |
 | --- | --- | --- |
-| `ProviderLocal` | None | `LocalCapacity` |
+| `ProviderLocal` | None | `LocalCapacity`, `LocalMaxBytes` |
 | `ProviderSES` | `Region`, `AccessKeyID`, `SecretAccessKey` | `SessionToken`, `BaseURL`, `HTTPClient` |
 | `ProviderResend` | `APIKey` | `BaseURL`, `HTTPClient` |
 | `ProviderMailgun` | `APIKey`, `Domain` | `BaseURL`, `HTTPClient` |
 | `ProviderSendGrid` | `APIKey` | `BaseURL`, `HTTPClient` |
+
+All providers accept `MaxMessageBytes`; see the [message contract](message-contract.md).
 
 For example, Resend configuration can come from your application's environment:
 

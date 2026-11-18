@@ -17,6 +17,56 @@ func localTestRequest(handler http.Handler, method, path string, destination ...
 	return recorder
 }
 
+func TestLocalSubjectRendering(t *testing.T) {
+	prefix := strings.Repeat("界", subjectMaxRunes-2) + "🙂"
+	for _, tc := range []struct {
+		name, subject, abbreviated string
+	}{
+		{"below limit", prefix, prefix},
+		{"at limit", prefix + "é", prefix + "é"},
+		{"above limit", prefix + "é終", prefix + "é…"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inbox := localTestInbox(t, 2)
+			email := localTestEmail(tc.subject)
+			email.HTML = "<p>preview</p>"
+			receipt, err := inbox.Send(t.Context(), email)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := localTestRequest(inbox, http.MethodGet, "/"+receipt.ID)
+			body := response.Body.String()
+			for _, want := range []string{
+				`<title>` + tc.abbreviated + ` · Pigeon — Inbox local</title>`,
+				`<span class="c-message-subject">` + tc.abbreviated + `</span>`,
+				`<h1 id="c-subject">` + tc.subject + `</h1>`,
+				`<iframe class="mail-preview" title="Prévia HTML da mensagem"`,
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("rendered page missing %q", want)
+				}
+			}
+			if response.Code != http.StatusOK {
+				t.Errorf("status = %d, want 200", response.Code)
+			}
+			if tc.subject != tc.abbreviated && strings.Count(body, tc.subject) != 1 {
+				t.Errorf("full subject should appear only in the detail heading")
+			}
+
+			if _, err := inbox.Send(t.Context(), localTestEmail("other")); err != nil {
+				t.Fatal(err)
+			}
+			other := localTestRequest(inbox, http.MethodGet, "/").Body.String()
+			if !strings.Contains(other, `<span class="c-message-subject">`+tc.abbreviated+`</span>`) {
+				t.Error("unselected message missing abbreviated queue subject")
+			}
+			if tc.subject != tc.abbreviated && strings.Contains(other, tc.subject) {
+				t.Error("unselected message exposed its full subject")
+			}
+		})
+	}
+}
+
 func TestLocalHTTPMountAndIsolation(t *testing.T) {
 	inbox := localTestInbox(t, 10)
 	email := localTestEmail(`<script>alert("subject")</script>`)

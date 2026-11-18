@@ -18,10 +18,26 @@ type localSummary struct {
 type localPage struct {
 	Messages []localSummary
 	Selected localMessage
+	Title    string
 	Position int
 	Previous string
 	Next     string
 	Format   string
+}
+
+const subjectMaxRunes = 120
+
+// abbreviate shortens a subject for queue and page title contexts, keeping
+// whole runes so multibyte characters are never split.
+func abbreviate(subject string) string {
+	count := 0
+	for offset := range subject {
+		if count == subjectMaxRunes {
+			return subject[:offset] + "…"
+		}
+		count++
+	}
+	return subject
 }
 
 // ServeHTTP serves a read-only development inbox. Mount it with StripPrefix;
@@ -110,10 +126,11 @@ func (inbox *LocalInbox) pageSnapshot(id string) localPage {
 	for i := range inbox.count {
 		candidate := inbox.messages[(inbox.start+inbox.count-1-i)%len(inbox.messages)]
 		page.Messages[i] = localSummary{
-			ID: candidate.ID, From: candidate.Email.From, To: candidate.Email.To, Subject: candidate.Email.Subject,
+			ID: candidate.ID, From: candidate.Email.From, To: candidate.Email.To, Subject: abbreviate(candidate.Email.Subject),
 		}
 		if candidate.ID == id || (id == "" && i == 0) {
 			page.Selected = candidate
+			page.Title = page.Messages[i].Subject
 			page.Position = i + 1
 		}
 	}

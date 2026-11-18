@@ -10,6 +10,8 @@ go test ./... -run '^$' -bench . -benchmem
 
 These measurements used Go 1.27.3 on an Apple M2 Max, one ASCII sender and recipient, and a 4 KiB plain-text body. They compare the first working implementation with the measured changes described above, using `BenchmarkSend` and `-benchtime=100ms -count=1`. They exclude provider network latency; byte counts can vary slightly between runs.
 
+The Local figures predate owned copies of retained strings. Current local delivery copies the content to avoid retaining larger backing buffers through substrings.
+
 | Provider | Before, B/op | After, B/op | Before, allocs/op | After, allocs/op |
 | --- | ---: | ---: | ---: | ---: |
 | Local | 230 | 39 | 11 | 1 |

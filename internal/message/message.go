@@ -72,6 +72,34 @@ func AddressStrings(addresses []Address) []string {
 	return result
 }
 
+// Size returns the combined byte length of every string field in the email:
+// the subject, both bodies, and every address name and addr-spec, including
+// From, ReplyTo and all recipients. It saturates instead of overflowing.
+// Validate the email first; Size walks every recipient list it is given.
+func Size(email *Email) int {
+	const maxInt = int(^uint(0) >> 1)
+	total := 0
+	add := func(s string) {
+		if piece := len(s); maxInt-total >= piece {
+			total += piece
+		} else {
+			total = maxInt
+		}
+	}
+	address := func(a Address) { add(a.Name); add(a.Email) }
+	address(email.From)
+	address(email.ReplyTo)
+	add(email.Subject)
+	add(email.Text)
+	add(email.HTML)
+	for _, group := range [][]Address{email.To, email.Cc, email.Bcc} {
+		for _, a := range group {
+			address(a)
+		}
+	}
+	return total
+}
+
 // Validate enforces the portable message contract before any provider is called.
 func Validate(email *Email) error {
 	if email == nil {

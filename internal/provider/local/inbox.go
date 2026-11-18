@@ -3,15 +3,15 @@ package local
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"go.alvadorn.org/pigeon/internal/message"
 	"go.alvadorn.org/pigeon/internal/provider"
 )
 
-const localBudget = 16 << 20
+const localDefaultMaxBytes = 16 << 20
 
 type localMessage struct {
 	ID    string
@@ -25,12 +25,14 @@ type LocalInbox struct {
 	mu                  sync.RWMutex
 	messages            []localMessage
 	start, count, bytes int
+	maxBytes            int
 	next                uint64
 }
 
 // New creates a bounded development inbox. A zero capacity defaults to
 // 100 messages; a negative capacity is invalid. Retained content is also
-// limited to 16 MiB, with the oldest messages evicted first.
+// limited: a zero LocalMaxBytes defaults to 16 MiB and negative values are
+// invalid. The oldest messages are evicted first.
 func New(cfg *provider.Config) (*LocalInbox, error) {
 	capacity := cfg.LocalCapacity
 	if capacity < 0 {
@@ -39,7 +41,14 @@ func New(cfg *provider.Config) (*LocalInbox, error) {
 	if capacity == 0 {
 		capacity = 100
 	}
-	return &LocalInbox{messages: make([]localMessage, capacity)}, nil
+	maxBytes := cfg.LocalMaxBytes
+	if maxBytes < 0 {
+		return nil, fmt.Errorf("local max bytes must not be negative")
+	}
+	if maxBytes == 0 {
+		maxBytes = localDefaultMaxBytes
+	}
+	return &LocalInbox{messages: make([]localMessage, capacity), maxBytes: maxBytes}, nil
 }
 
 // Send stores a snapshot of the email and returns its local, monotonic ID.
@@ -51,21 +60,26 @@ func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (messag
 	if email == nil {
 		return message.Receipt{}, fmt.Errorf("local email is nil")
 	}
-	size, ok := localSize(email)
-	if !ok {
-		return message.Receipt{}, fmt.Errorf("local email exceeds 16 MiB retention limit")
+	size := message.Size(email)
+	if size > inbox.maxBytes {
+		return message.Receipt{}, fmt.Errorf("local email exceeds %d byte retention limit", inbox.maxBytes)
 	}
 	copyEmail := *email
-	copyEmail.To = slices.Clone(email.To)
-	copyEmail.Cc = slices.Clone(email.Cc)
-	copyEmail.Bcc = slices.Clone(email.Bcc)
+	copyEmail.From = localCloneAddress(email.From)
+	copyEmail.ReplyTo = localCloneAddress(email.ReplyTo)
+	copyEmail.To = localCloneAddresses(email.To)
+	copyEmail.Cc = localCloneAddresses(email.Cc)
+	copyEmail.Bcc = localCloneAddresses(email.Bcc)
+	copyEmail.Subject = strings.Clone(email.Subject)
+	copyEmail.Text = strings.Clone(email.Text)
+	copyEmail.HTML = strings.Clone(email.HTML)
 
 	inbox.mu.Lock()
 	defer inbox.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return message.Receipt{}, err
 	}
-	for inbox.count > 0 && (inbox.count == len(inbox.messages) || inbox.bytes+size > localBudget) {
+	for inbox.count > 0 && (inbox.count == len(inbox.messages) || size > inbox.maxBytes-inbox.bytes) {
 		old := &inbox.messages[inbox.start]
 		inbox.bytes -= old.size
 		*old = localMessage{}
@@ -81,25 +95,21 @@ func (inbox *LocalInbox) Send(ctx context.Context, email *message.Email) (messag
 	return message.Receipt{ID: id}, nil
 }
 
-func localSize(email *message.Email) (int, bool) {
-	size := 0
-	add := func(s string) bool {
-		if len(s) > localBudget-size {
-			return false
-		}
-		size += len(s)
-		return true
+// localCloneAddress owns the bytes of an address snapshot; empty strings are
+// shared, not copied.
+func localCloneAddress(a message.Address) message.Address {
+	a.Name = strings.Clone(a.Name)
+	a.Email = strings.Clone(a.Email)
+	return a
+}
+
+func localCloneAddresses(addresses []message.Address) []message.Address {
+	if addresses == nil {
+		return nil
 	}
-	address := func(a message.Address) bool { return add(a.Name) && add(a.Email) }
-	if !address(email.From) || !address(email.ReplyTo) || !add(email.Subject) || !add(email.Text) || !add(email.HTML) {
-		return 0, false
+	clones := make([]message.Address, len(addresses))
+	for i, a := range addresses {
+		clones[i] = localCloneAddress(a)
 	}
-	for _, group := range [][]message.Address{email.To, email.Cc, email.Bcc} {
-		for _, a := range group {
-			if !address(a) {
-				return 0, false
-			}
-		}
-	}
-	return size, true
+	return clones
 }
