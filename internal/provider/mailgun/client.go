@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"go.alvadorn.org/pigeon/internal/httptransport"
 	"go.alvadorn.org/pigeon/internal/provider"
-	"go.alvadorn.org/pigeon/internal/provider/internal/httptransport"
 )
 
 type mailgunSender struct {

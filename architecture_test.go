@@ -14,7 +14,7 @@ func TestProviderDependencies(t *testing.T) {
 	const module = "go.alvadorn.org/pigeon"
 	const root = module + "/internal/provider"
 	const message = module + "/internal/message"
-	const transport = root + "/internal/httptransport"
+	const transport = module + "/internal/httptransport"
 	allowed := map[string][]string{
 		root:               {},
 		root + "/aws":      {root, message, transport},
@@ -24,7 +24,8 @@ func TestProviderDependencies(t *testing.T) {
 		root + "/local":    {root, message},
 		transport:          {root, message},
 	}
-	output, err := exec.Command("go", "list", "-json", "./internal/provider/...").Output()
+	listed := []string{"list", "-json", "./internal/provider/...", "./internal/httptransport"}
+	output, err := exec.CommandContext(t.Context(), "go", listed...).Output()
 	if err != nil {
 		t.Fatalf("list provider packages: %v", err)
 	}

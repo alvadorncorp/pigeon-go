@@ -13,9 +13,9 @@ Pigeon follows Swoosh's separation between an email value, a configured mailer, 
 
 [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html) uses a SHA-256 payload hash, canonical request, credential scope, and HMAC-derived signing key. The SES service name is `ses`, although the endpoint host starts with `email`. This distinction is also visible in [AWS's generated endpoint code](https://github.com/aws/aws-sdk-go-v2/blob/main/service/sesv2/endpoints.go). Session credentials add the security token to both the request and signed headers. The signer hashes the same JSON buffer passed to HTTP.
 
-[AWS signing fixtures](https://github.com/awslabs/aws-c-auth/tree/main/tests/aws-signing-test-suite/v4) provide independent expected signatures. Generic fixtures establish signing mechanics; SES request tests still need to cover its service name, payload, path, and optional token.
+[AWS signing fixtures](https://github.com/awslabs/aws-c-auth/tree/main/tests/aws-signing-test-suite/v4) provide independent expected signatures. A published fixture pins key derivation; SES request tests cover its service name, path and optional token.
 
-The endpoint is regional. See [SES endpoints](https://docs.aws.amazon.com/general/latest/gr/ses.html). Temporary credentials are supplied explicitly; role discovery and refresh are outside this library.
+The endpoint is regional. See [SES endpoints](https://docs.aws.amazon.com/general/latest/gr/ses.html); SES is not offered in the China regions, so no `amazonaws.com.cn` endpoint is built. Temporary credentials are supplied explicitly; role discovery and refresh are outside this library. SES v2 reports error codes in the `X-Amzn-Errortype` header, which becomes `DeliveryError.Code`.
 
 ## Resend
 

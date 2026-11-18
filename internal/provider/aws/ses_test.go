@@ -72,7 +72,7 @@ func TestSESSendProtocol(t *testing.T) {
 		verifySESProtocol(t, w, r)
 	}))
 	defer server.Close()
-	s, err := NewSES(sesTestConfig(server.URL))
+	s, err := New(sesTestConfig(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestSESConcurrentSends(t *testing.T) {
 		_, _ = io.WriteString(w, `{"MessageId":"ses-id"}`)
 	}))
 	defer server.Close()
-	s, err := NewSES(sesTestConfig(server.URL))
+	s, err := New(sesTestConfig(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func checkSESResponse(t *testing.T, status int, body string, wantDelivery bool) 
 		}
 	}))
 	defer server.Close()
-	s, err := NewSES(sesTestConfig(server.URL))
+	s, err := New(sesTestConfig(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestSESContext(t *testing.T) {
 		t.Error("canceled request reached server")
 	}))
 	defer server.Close()
-	s, err := NewSES(sesTestConfig(server.URL))
+	s, err := New(sesTestConfig(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,37 +185,35 @@ func TestSESContext(t *testing.T) {
 func TestSESConfig(t *testing.T) {
 	for _, region := range []string{
 		"", "us-east-1.example.com", "us-east-1/path", "us-east-1:443",
-		"-us", "US-EAST-1", strings.Repeat("a", 64),
+		"-us", "US-EAST-1", strings.Repeat("a", 64), "cn-north-1",
 	} {
 		config := sesTestConfig("")
 		config.Region = region
-		if _, err := NewSES(config); err == nil {
+		if _, err := New(config); err == nil {
 			t.Errorf("accepted region %q", region)
 		}
 	}
-	for _, region := range []string{"us-east-1", "cn-north-1"} {
-		config := sesTestConfig("")
-		config.Region = region
-		s, err := NewSES(config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "https://email." + region + ".amazonaws.com"
-		if strings.HasPrefix(region, "cn-") {
-			want += ".cn"
-		}
-		if s.http.BaseURL() != want {
-			t.Errorf("endpoint = %q, want %q", s.http.BaseURL(), want)
-		}
-	}
 	config := sesTestConfig("")
-	config.AccessKeyID = ""
-	if _, err := NewSES(config); err == nil {
-		t.Error("accepted empty access key")
+	config.Region = "eu-west-1"
+	s, err := New(config)
+	if err != nil {
+		t.Fatal(err)
 	}
-	config = sesTestConfig("")
-	config.SecretAccessKey = ""
-	if _, err := NewSES(config); err == nil {
-		t.Error("accepted empty secret")
+	if want := "https://email.eu-west-1.amazonaws.com"; s.http.BaseURL() != want {
+		t.Errorf("endpoint = %q, want %q", s.http.BaseURL(), want)
+	}
+	for name, edit := range map[string]func(*provider.Config){
+		"empty access key":        func(c *provider.Config) { c.AccessKeyID = "" },
+		"empty secret":            func(c *provider.Config) { c.SecretAccessKey = "" },
+		"access key delimiter":    func(c *provider.Config) { c.AccessKeyID = "AKID/x" },
+		"access key control byte": func(c *provider.Config) { c.AccessKeyID = "AKID\x00" },
+		"token with CR":           func(c *provider.Config) { c.SessionToken = "token\r" },
+		"token with space":        func(c *provider.Config) { c.SessionToken = "to ken" },
+	} {
+		config := sesTestConfig("")
+		edit(config)
+		if _, err := New(config); err == nil {
+			t.Errorf("accepted %s", name)
+		}
 	}
 }

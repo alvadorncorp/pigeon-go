@@ -1,8 +1,8 @@
 package resend
 
 import (
+	"go.alvadorn.org/pigeon/internal/httptransport"
 	"go.alvadorn.org/pigeon/internal/provider"
-	"go.alvadorn.org/pigeon/internal/provider/internal/httptransport"
 )
 
 type resendSender struct {

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
+	"go.alvadorn.org/pigeon/internal/httptransport"
 	"go.alvadorn.org/pigeon/internal/message"
 )
 
@@ -35,7 +37,7 @@ func (s *resendSender) Send(ctx context.Context, email *message.Email) (message.
 	if email.ReplyTo.Email != "" {
 		payload.ReplyTo = email.ReplyTo.String()
 	}
-	body, err := json.Marshal(payload)
+	body, err := httptransport.EncodeJSON(payload)
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("resend: encode email: %w", err)
 	}
@@ -56,7 +58,7 @@ func (s *resendSender) Send(ctx context.Context, email *message.Email) (message.
 		return message.Receipt{}, fmt.Errorf("resend: decode response: %w", err)
 	}
 	if result.ID == "" {
-		return message.Receipt{}, fmt.Errorf("resend: response missing id")
+		return message.Receipt{}, errors.New("resend: response missing id")
 	}
 	return message.Receipt{ID: result.ID}, nil
 }

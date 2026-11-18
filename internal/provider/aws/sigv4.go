@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -44,7 +43,8 @@ func (s *sesSender) sign(req *http.Request, body []byte, now time.Time) {
 	signedHeaders := "content-type;host;x-amz-date"
 	if s.token != "" {
 		req.Header.Set("X-Amz-Security-Token", s.token)
-		canonicalHeaders += "x-amz-security-token:" + strings.Join(strings.Fields(s.token), " ") + "\n"
+		// New rejects tokens with spaces, so the value needs no whitespace folding.
+		canonicalHeaders += "x-amz-security-token:" + s.token + "\n"
 		signedHeaders += ";x-amz-security-token"
 	}
 	payloadHash := sha256.Sum256(body)

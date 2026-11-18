@@ -16,14 +16,10 @@ import (
 func (s *mailgunSender) Send(ctx context.Context, email *message.Email) (message.Receipt, error) {
 	var body bytes.Buffer
 	const multipartOverhead = 2048
-	body.Grow(len(email.Text) + len(email.HTML) + len(email.Subject) + multipartOverhead)
+	body.Grow(message.Size(email) + multipartOverhead)
 	form := multipart.NewWriter(&body)
-	if err := writeMessageFields(form, &body, email); err != nil {
-		return message.Receipt{}, err
-	}
-	if err := form.Close(); err != nil {
-		return message.Receipt{}, fmt.Errorf("mailgun: close multipart form: %w", err)
-	}
+	writeMessageFields(form, &body, email)
+	_ = form.Close() // Writes the closing boundary into body; bytes.Buffer never fails.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body.Bytes()))
 	if err != nil {
 		return message.Receipt{}, fmt.Errorf("mailgun: create request: %w", err)
@@ -46,51 +42,32 @@ func (s *mailgunSender) Send(ctx context.Context, email *message.Email) (message
 	return message.Receipt{ID: result.ID}, nil
 }
 
-func writeMessageFields(form *multipart.Writer, body *bytes.Buffer, email *message.Email) error {
-	if err := writeFormField(form, body, "from", email.From.String()); err != nil {
-		return err
-	}
+func writeMessageFields(form *multipart.Writer, body *bytes.Buffer, email *message.Email) {
+	writeFormField(form, body, "from", email.From.String())
 	for _, group := range []struct {
 		name      string
 		addresses []message.Address
 	}{{"to", email.To}, {"cc", email.Cc}, {"bcc", email.Bcc}} {
 		for _, address := range group.addresses {
-			if err := writeFormField(form, body, group.name, address.String()); err != nil {
-				return err
-			}
+			writeFormField(form, body, group.name, address.String())
 		}
 	}
 	if email.ReplyTo.Email != "" {
-		if err := writeFormField(form, body, "h:Reply-To", email.ReplyTo.String()); err != nil {
-			return err
-		}
+		writeFormField(form, body, "h:Reply-To", email.ReplyTo.String())
 	}
-	if err := writeFormField(form, body, "subject", email.Subject); err != nil {
-		return err
-	}
-	return writeMessageBody(form, body, email)
-}
-
-func writeMessageBody(form *multipart.Writer, body *bytes.Buffer, email *message.Email) error {
+	writeFormField(form, body, "subject", email.Subject)
 	if email.Text != "" {
-		if err := writeFormField(form, body, "text", email.Text); err != nil {
-			return err
-		}
+		writeFormField(form, body, "text", email.Text)
 	}
 	if email.HTML != "" {
-		if err := writeFormField(form, body, "html", email.HTML); err != nil {
-			return err
-		}
+		writeFormField(form, body, "html", email.HTML)
 	}
-	return nil
 }
 
-func writeFormField(form *multipart.Writer, body *bytes.Buffer, name, value string) error {
-	if _, err := form.CreateFormField(name); err != nil {
-		return fmt.Errorf("mailgun: write %s: %w", name, err)
-	}
-	if _, err := body.WriteString(value); err != nil {
-		return fmt.Errorf("mailgun: write %s: %w", name, err)
-	}
-	return nil
+// writeFormField writes value straight into body, the writer's destination,
+// avoiding the []byte copy of multipart.Writer.WriteField. Writes into a
+// bytes.Buffer cannot fail.
+func writeFormField(form *multipart.Writer, body *bytes.Buffer, name, value string) {
+	_, _ = form.CreateFormField(name)
+	body.WriteString(value)
 }

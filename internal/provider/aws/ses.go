@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
+	"go.alvadorn.org/pigeon/internal/httptransport"
 	"go.alvadorn.org/pigeon/internal/provider"
-	"go.alvadorn.org/pigeon/internal/provider/internal/httptransport"
 )
 
 type sesSender struct {
@@ -17,21 +17,18 @@ type sesSender struct {
 	signingKey                          []byte
 }
 
-// NewSES constructs an SES v2 sender using a fixed snapshot of AWS credentials.
+// New constructs an SES v2 sender using a fixed snapshot of AWS credentials.
 // Credentials are not discovered or refreshed automatically.
-func NewSES(config *provider.Config) (*sesSender, error) {
+func New(config *provider.Config) (*sesSender, error) {
 	if !validSESRegion(config.Region) {
 		return nil, errors.New("ses: invalid region")
 	}
-	if config.AccessKeyID == "" || config.SecretAccessKey == "" ||
-		strings.ContainsAny(config.AccessKeyID, " \t\r\n/,=") || strings.ContainsAny(config.SessionToken, "\r\n") {
+	if httptransport.RequireAPIKey(config.AccessKeyID) != nil || config.SecretAccessKey == "" ||
+		strings.ContainsAny(config.AccessKeyID, "/,=") ||
+		(config.SessionToken != "" && httptransport.RequireAPIKey(config.SessionToken) != nil) {
 		return nil, errors.New("ses: invalid credentials")
 	}
-	suffix := "amazonaws.com"
-	if strings.HasPrefix(config.Region, "cn-") {
-		suffix = "amazonaws.com.cn"
-	}
-	h, err := httptransport.New(config, "https://email."+config.Region+"."+suffix)
+	h, err := httptransport.New(config, "https://email."+config.Region+".amazonaws.com")
 	if err != nil {
 		return nil, err
 	}
@@ -41,8 +38,11 @@ func NewSES(config *provider.Config) (*sesSender, error) {
 	}, nil
 }
 
+// validSESRegion accepts DNS-safe region names. SES has no endpoint in the
+// China (cn-) partition, so those are rejected instead of failing at send time.
 func validSESRegion(region string) bool {
-	if region == "" || len(region) > 63 || region[0] == '-' || region[len(region)-1] == '-' {
+	if region == "" || len(region) > 63 || region[0] == '-' || region[len(region)-1] == '-' ||
+		strings.HasPrefix(region, "cn-") {
 		return false
 	}
 	for _, c := range region {

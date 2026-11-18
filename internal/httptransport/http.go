@@ -1,6 +1,8 @@
 package httptransport
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,40 +20,45 @@ const (
 	defaultTimeout   = 30 * time.Second
 )
 
+// Client is the shared HTTP policy of the cloud adapters.
 type Client struct {
 	client   *http.Client
 	baseURL  string
 	provider provider.Kind
 }
 
+// New validates the origin and HTTP client in config and falls back to defaultURL.
 func New(config *provider.Config, defaultURL string) (Client, error) {
 	baseURL := config.BaseURL
 	if baseURL == "" {
 		baseURL = defaultURL
 	}
-	if err := validateOrigin(baseURL); err != nil {
+	origin, err := validateOrigin(baseURL)
+	if err != nil {
 		return Client{}, err
 	}
 	client, err := configuredClient(config.HTTPClient)
 	if err != nil {
 		return Client{}, err
 	}
-	return Client{client: &client, baseURL: strings.TrimSuffix(baseURL, "/"), provider: config.Provider}, nil
+	return Client{client: &client, baseURL: origin, provider: config.Provider}, nil
 }
 
-func validateOrigin(baseURL string) error {
+// validateOrigin returns the normalized scheme://host of baseURL. It rebuilds
+// the origin so a trailing "?" or "#" cannot survive into request URLs.
+func validateOrigin(baseURL string) (string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
-		u.Fragment != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
-		return errors.New("pigeon: base URL must be an HTTP(S) origin without credentials, path, query or fragment")
+		strings.ContainsRune(baseURL, '#') || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
+		return "", errors.New("pigeon: base URL must be an HTTP(S) origin without credentials, path, query or fragment")
 	}
 	if u.Scheme != "https" {
 		ip := net.ParseIP(u.Hostname())
 		if u.Scheme != "http" || ip == nil || !ip.IsLoopback() {
-			return errors.New("pigeon: base URL requires HTTPS except for literal loopback addresses")
+			return "", errors.New("pigeon: base URL requires HTTPS except for literal loopback addresses")
 		}
 	}
-	return nil
+	return u.Scheme + "://" + u.Host, nil
 }
 
 func configuredClient(original *http.Client) (http.Client, error) {
@@ -70,6 +77,8 @@ func configuredClient(original *http.Client) (http.Client, error) {
 	return client, nil
 }
 
+// RequireAPIKey rejects empty keys and anything but printable non-space ASCII,
+// so a credential can never split an HTTP header.
 func RequireAPIKey(key string) error {
 	if key == "" {
 		return errors.New("pigeon: API key is required")
@@ -82,6 +91,20 @@ func RequireAPIKey(key string) error {
 	return nil
 }
 
+// EncodeJSON marshals v without HTML escaping. Email HTML is full of <, > and
+// &, which json.Marshal would expand to six-byte \u00XX sequences.
+func EncodeJSON(v any) ([]byte, error) {
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(body.Bytes(), []byte("\n")), nil
+}
+
+// Do sends req and returns the body and headers of a 2xx response. Any other
+// status becomes a *message.DeliveryError, even when its body exceeds the cap.
 func (h *Client) Do(req *http.Request) ([]byte, http.Header, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "pigeon")
@@ -92,18 +115,19 @@ func (h *Client) Do(req *http.Request) ([]byte, http.Header, error) {
 	// A close error must not turn an accepted delivery into a retry and duplicate.
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, nil, responseError(h.provider, resp, body[:min(len(body), maxResponseBytes)])
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("pigeon: %s response: %w", h.provider, err)
 	}
 	if len(body) > maxResponseBytes {
 		return nil, nil, fmt.Errorf("pigeon: %s response exceeds %d bytes", h.provider, maxResponseBytes)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, responseError(h.provider, resp.StatusCode, body)
-	}
 	return body, resp.Header, nil
 }
 
+// BaseURL returns the validated scheme://host origin.
 func (h *Client) BaseURL() string {
 	return h.baseURL
 }

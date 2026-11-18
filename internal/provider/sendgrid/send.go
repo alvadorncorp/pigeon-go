@@ -1,19 +1,26 @@
+// Package sendgrid delivers email through the Twilio SendGrid v3 Mail Send API.
 package sendgrid
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
+	"go.alvadorn.org/pigeon/internal/httptransport"
 	"go.alvadorn.org/pigeon/internal/message"
 )
 
+// sendGridAddress is SendGrid's address object; the public Address carries no wire tags.
+type sendGridAddress struct {
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email"`
+}
+
 type sendGridPersonalization struct {
-	To  []message.Address `json:"to"`
-	Cc  []message.Address `json:"cc,omitempty"`
-	Bcc []message.Address `json:"bcc,omitempty"`
+	To  []sendGridAddress `json:"to"`
+	Cc  []sendGridAddress `json:"cc,omitempty"`
+	Bcc []sendGridAddress `json:"bcc,omitempty"`
 }
 
 type sendGridContent struct {
@@ -23,21 +30,35 @@ type sendGridContent struct {
 
 type sendGridPayload struct {
 	Personalizations [1]sendGridPersonalization `json:"personalizations"`
-	From             message.Address            `json:"from"`
-	ReplyTo          *message.Address           `json:"reply_to,omitempty"`
+	From             sendGridAddress            `json:"from"`
+	ReplyTo          *sendGridAddress           `json:"reply_to,omitempty"`
 	Subject          string                     `json:"subject"`
 	Content          []sendGridContent          `json:"content"`
+}
+
+func addresses(list []message.Address) []sendGridAddress {
+	if len(list) == 0 {
+		return nil
+	}
+	result := make([]sendGridAddress, len(list))
+	for i, a := range list {
+		result[i] = sendGridAddress(a)
+	}
+	return result
 }
 
 // Send submits one message and returns SendGrid's optional acceptance ID.
 func (s *sendGridSender) Send(ctx context.Context, email *message.Email) (message.Receipt, error) {
 	payload := sendGridPayload{
-		Personalizations: [1]sendGridPersonalization{{To: email.To, Cc: email.Cc, Bcc: email.Bcc}},
-		From:             email.From,
-		Subject:          email.Subject,
+		Personalizations: [1]sendGridPersonalization{{
+			To: addresses(email.To), Cc: addresses(email.Cc), Bcc: addresses(email.Bcc),
+		}},
+		From:    sendGridAddress(email.From),
+		Subject: email.Subject,
 	}
 	if email.ReplyTo.Email != "" {
-		payload.ReplyTo = &email.ReplyTo
+		replyTo := sendGridAddress(email.ReplyTo)
+		payload.ReplyTo = &replyTo
 	}
 	if email.Text != "" {
 		payload.Content = append(payload.Content, sendGridContent{Type: "text/plain", Value: email.Text})
@@ -45,9 +66,9 @@ func (s *sendGridSender) Send(ctx context.Context, email *message.Email) (messag
 	if email.HTML != "" {
 		payload.Content = append(payload.Content, sendGridContent{Type: "text/html", Value: email.HTML})
 	}
-	body, err := json.Marshal(payload)
+	body, err := httptransport.EncodeJSON(payload)
 	if err != nil {
-		return message.Receipt{}, fmt.Errorf("encode sendgrid message: %w", err)
+		return message.Receipt{}, fmt.Errorf("sendgrid: encode email: %w", err)
 	}
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -56,7 +77,7 @@ func (s *sendGridSender) Send(ctx context.Context, email *message.Email) (messag
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return message.Receipt{}, fmt.Errorf("create sendgrid request: %w", err)
+		return message.Receipt{}, fmt.Errorf("sendgrid: create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Content-Type", "application/json")

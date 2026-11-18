@@ -8,14 +8,14 @@ The benchmark suite reports allocations as well as time. `BenchmarkSend` exercis
 go test ./... -run '^$' -bench . -benchmem
 ```
 
-These measurements used Go 1.27.3 on an Apple M2 Max, one ASCII sender and recipient, and a 4 KiB plain-text body. They compare the first working implementation with the measured changes described above, using `BenchmarkSend` and `-benchtime=100ms -count=1`. They exclude provider network latency; byte counts can vary slightly between runs.
+These measurements used Go 1.27.4 on an Apple M2 Max, one ASCII sender and recipient, and a 4 KiB plain-text body, using `BenchmarkSend` and `-benchtime=100ms -count=1`. "Before" is the first working implementation. They exclude provider network latency; byte counts can vary slightly between runs.
 
-The Local figures predate owned copies of retained strings. Current local delivery copies the content to avoid retaining larger backing buffers through substrings.
+Local delivery now copies the content (4 KiB here) so it never retains larger backing buffers through substrings. JSON adapters encode without HTML escaping: that costs two small allocations on a plain-text body, and saves about half the payload on HTML email, where `<`, `>` and `&` would otherwise grow to six bytes each (a 50 KB HTML body went from +57 % to +4 % over its raw size).
 
 | Provider | Before, B/op | After, B/op | Before, allocs/op | After, allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| Local | 230 | 39 | 11 | 1 |
-| Amazon SES | 13,525 | 11,184 | 108 | 69 |
-| Resend | 9,295 | 9,094 | 58 | 48 |
-| Mailgun | 17,052 | 12,670 | 120 | 106 |
-| Twilio SendGrid | 9,276 | 9,078 | 57 | 47 |
+| Local | 230 | 4,192 | 11 | 6 |
+| Amazon SES | 13,525 | 11,357 | 108 | 71 |
+| Resend | 9,295 | 9,247 | 58 | 50 |
+| Mailgun | 17,052 | 12,677 | 120 | 106 |
+| Twilio SendGrid | 9,276 | 9,260 | 57 | 50 |
