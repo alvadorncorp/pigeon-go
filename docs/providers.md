@@ -27,8 +27,8 @@ Mailgun uses its US endpoint by default. For an EU domain, set `BaseURL: "https:
 
 An empty or unrecognized provider returns an error. Pigeon never silently substitutes local delivery for a missing cloud configuration.
 
+Concurrent sends share one HTTP client. The default transport keeps only two idle connections per host, so a burst of parallel sends opens a fresh TLS connection for every request past the second. If you send in bursts, pass an `HTTPClient` whose `Transport` sets `MaxIdleConnsPerHost` to your expected concurrency.
+
 SendGrid may return an empty receipt ID if its acceptance response has no `X-Message-Id` header.
 
-`New` now takes `*pigeon.Config`: migrate calls such as `pigeon.New(pigeon.Config{...})` to
-`pigeon.New(&pigeon.Config{...})`. A nil config is rejected. Configuration is read synchronously
-and snapshotted during `New`; later changes to the config do not reconfigure the mailer.
+`New` requires a non-nil `*Config` and reads it once: later changes to the config do not reconfigure the mailer.

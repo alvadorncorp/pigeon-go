@@ -116,6 +116,26 @@ func TestHTTPInFlightCancellation(t *testing.T) {
 	}
 }
 
+func TestHTTPClientValidation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	original := &http.Client{Timeout: -1}
+	if _, err := New(
+		&provider.Config{Provider: provider.Resend, BaseURL: server.URL, HTTPClient: original},
+		"",
+	); err == nil {
+		t.Fatal("negative timeout accepted")
+	}
+	h, err := New(&provider.Config{Provider: provider.Resend, BaseURL: server.URL + "/"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.BaseURL() != server.URL {
+		t.Fatalf("base URL = %q, want trailing slash removed", h.BaseURL())
+	}
+}
+
 func TestHTTPRejectsUnsafeOrigins(t *testing.T) {
 	for _, origin := range []string{
 		"http://example.com", "http://localhost", "https://key@example.com",
