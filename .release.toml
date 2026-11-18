@@ -1,3 +1,13 @@
+[notes]
+public = ["feat", "fix", "perf", "revert", "ci"]
+internal = ["refactor", "docs", "style", "test", "build", "chore"]
+[notes.labels]
+feat = { emoji = "✨", label = "Features" }
+fix = { emoji = "🐛", label = "Bug Fixes" }
+perf = { emoji = "⚡", label = "Performance" }
+revert = { emoji = "⟲", label = "Reverts" }
+ci = { emoji = "👷", label = "CI" }
+
 [groups.default]
 source = "tag"
 targets = [{ type = "go", path = "." }]
