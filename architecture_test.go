@@ -12,29 +12,46 @@ import (
 
 func TestProviderDependencies(t *testing.T) {
 	const module = "go.alvadorn.org/pigeon"
-	const root = module + "/internal/provider"
+	const root = module
 	const message = module + "/internal/message"
+	const providerRoot = module + "/internal/provider"
 	const transport = module + "/internal/httptransport"
 	allowed := map[string][]string{
-		root:               {},
-		root + "/aws":      {root, message, transport},
-		root + "/resend":   {root, message, transport},
-		root + "/mailgun":  {root, message, transport},
-		root + "/sendgrid": {root, message, transport},
-		root + "/local":    {root, message},
-		transport:          {root, message},
+		module: {
+			message, providerRoot, transport,
+			providerRoot + "/aws", providerRoot + "/local", providerRoot + "/mailgun",
+			providerRoot + "/resend", providerRoot + "/sendgrid",
+		},
+		message:                    {},
+		module + "/examples/send":  {module},
+		module + "/examples/local": {module},
+		providerRoot:               {},
+		providerRoot + "/aws":      {providerRoot, message, transport},
+		providerRoot + "/resend":   {providerRoot, message, transport},
+		providerRoot + "/mailgun":  {providerRoot, message, transport},
+		providerRoot + "/sendgrid": {providerRoot, message, transport},
+		providerRoot + "/local":    {providerRoot, message},
+		transport:                  {providerRoot, message},
 	}
-	listed := []string{"list", "-json", "./internal/provider/...", "./internal/httptransport"}
+	listed := []string{
+		"list",
+		"-json",
+		".",
+		"./internal/provider/...",
+		"./internal/httptransport",
+		"./internal/message",
+		"./examples/...",
+	}
 	output, err := exec.CommandContext(t.Context(), "go", listed...).Output()
 	if err != nil {
-		t.Fatalf("list provider packages: %v", err)
+		t.Fatalf("list internal and example packages: %v", err)
 	}
 	packages := decodeProviderPackages(t, output)
 	seen := make(map[string]bool)
 	for _, pkg := range packages {
 		imports, ok := allowed[pkg.ImportPath]
 		if !ok {
-			t.Errorf("provider package %s has no dependency rule", pkg.ImportPath)
+			t.Errorf("package %s has no dependency rule", pkg.ImportPath)
 			continue
 		}
 		seen[pkg.ImportPath] = true
@@ -42,7 +59,7 @@ func TestProviderDependencies(t *testing.T) {
 	}
 	for path := range allowed {
 		if !seen[path] {
-			t.Errorf("missing provider package %s", path)
+			t.Errorf("missing guarded package %s", path)
 		}
 	}
 }

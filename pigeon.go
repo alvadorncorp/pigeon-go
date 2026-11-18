@@ -35,12 +35,14 @@ type DeliveryError = message.DeliveryError
 type Provider string
 
 // The supported providers. ProviderLocal keeps messages in memory for development.
+// Each value derives from the provider.Kind constant of its adapter, so the
+// public and internal identifiers cannot drift apart.
 const (
-	ProviderSES      Provider = "ses"
-	ProviderResend   Provider = "resend"
-	ProviderMailgun  Provider = "mailgun"
-	ProviderSendGrid Provider = "sendgrid"
-	ProviderLocal    Provider = "local"
+	ProviderSES      = Provider(provider.SES)
+	ProviderResend   = Provider(provider.Resend)
+	ProviderMailgun  = Provider(provider.Mailgun)
+	ProviderSendGrid = Provider(provider.SendGrid)
+	ProviderLocal    = Provider(provider.Local)
 )
 
 type sender interface {
@@ -52,15 +54,33 @@ const defaultMessageBytes = 1 << 20
 
 // backends maps each provider to its constructor and published per-message
 // byte cap. A zero cap means none: the local inbox enforces its own budget.
+// Only the local adapter builds an inbox handler; the Inbox capability is
+// declared here instead of discovered through a runtime type assertion, so a
+// cloud adapter that grows a ServeHTTP method is never served as a mailbox.
 var backends = map[Provider]struct {
 	maxBytes int
-	build    func(*provider.Config) (sender, error)
+	build    func(*provider.Config) (sender, http.Handler, error)
 }{
-	ProviderSES:      {40_000_000, func(c *provider.Config) (sender, error) { return aws.New(c) }},
-	ProviderResend:   {40_000_000, func(c *provider.Config) (sender, error) { return resend.New(c) }},
-	ProviderMailgun:  {25_000_000, func(c *provider.Config) (sender, error) { return mailgun.New(c) }},
-	ProviderSendGrid: {29_999_999, func(c *provider.Config) (sender, error) { return sendgrid.New(c) }},
-	ProviderLocal:    {0, func(c *provider.Config) (sender, error) { return local.New(c) }},
+	ProviderSES: {40_000_000, func(c *provider.Config) (sender, http.Handler, error) {
+		backend, err := aws.New(c)
+		return backend, nil, err
+	}},
+	ProviderResend: {40_000_000, func(c *provider.Config) (sender, http.Handler, error) {
+		backend, err := resend.New(c)
+		return backend, nil, err
+	}},
+	ProviderMailgun: {25_000_000, func(c *provider.Config) (sender, http.Handler, error) {
+		backend, err := mailgun.New(c)
+		return backend, nil, err
+	}},
+	ProviderSendGrid: {29_999_999, func(c *provider.Config) (sender, http.Handler, error) {
+		backend, err := sendgrid.New(c)
+		return backend, nil, err
+	}},
+	ProviderLocal: {0, func(c *provider.Config) (sender, http.Handler, error) {
+		inbox, err := local.New(c)
+		return inbox, inbox, err
+	}},
 }
 
 // resolveMessageBytes applies the documented semantics of WithMaxMessageBytes:
@@ -102,13 +122,9 @@ func New(kind Provider, opts ...Option) (*Mailer, error) {
 	if err != nil {
 		return nil, err
 	}
-	backend, err := backends[kind].build(&o.config)
+	backend, inbox, err := backends[kind].build(&o.config)
 	if err != nil {
 		return nil, err
-	}
-	inbox, ok := backend.(http.Handler)
-	if !ok {
-		inbox = http.NotFoundHandler()
 	}
 	return &Mailer{sender: backend, inbox: inbox, maxBytes: maxBytes}, nil
 }
@@ -116,8 +132,10 @@ func New(kind Provider, opts ...Option) (*Mailer, error) {
 // Send validates and synchronously submits one email, respecting ctx.
 // It rejects messages whose combined string bytes exceed the limit resolved
 // from WithMaxMessageBytes.
-// It makes no automatic retries: a timeout can mean the provider accepted the
-// message but its response was lost. Retrying can send a duplicate.
+// A nil error always means the provider accepted the message, even when
+// Receipt.ID is empty. It makes no automatic retries: a timeout can mean the
+// provider accepted the message but its response was lost. Retrying can send a
+// duplicate. Never retry a send that returned a nil error.
 // The caller must not mutate email or its slices until Send returns. Afterward,
 // the caller may reuse them; the local adapter retains its own snapshot.
 func (m *Mailer) Send(ctx context.Context, email *Email) (Receipt, error) {
