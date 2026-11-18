@@ -23,20 +23,23 @@ func responseError(kind provider.Kind, resp *http.Response, body []byte) *messag
 			Field   string `json:"field"`
 		} `json:"errors"`
 	}
-	if json.Unmarshal(body, &detail) == nil {
-		result.Message = detail.Message
-		if result.Code == "" {
-			result.Code = detail.Code
-		}
-		if result.Code == "" {
-			result.Code = detail.Name
-		}
-		if result.Code == "" {
-			result.Code = detail.Type
-		}
-		if result.Message == "" && len(detail.Errors) > 0 {
-			result.Message = detail.Errors[0].Message
-		}
+	// Decoding is best-effort: a field of the wrong JSON type returns
+	// *json.UnmarshalTypeError while keeping the remaining fields populated,
+	// and a syntax error leaves them zero. The DeliveryError keeps its status
+	// and header code either way, so the error carries nothing worth reporting.
+	_ = json.Unmarshal(body, &detail)
+	result.Message = detail.Message
+	if result.Code == "" {
+		result.Code = detail.Code
+	}
+	if result.Code == "" {
+		result.Code = detail.Name
+	}
+	if result.Code == "" {
+		result.Code = detail.Type
+	}
+	if result.Message == "" && len(detail.Errors) > 0 {
+		result.Message = detail.Errors[0].Message
 	}
 	return result
 }

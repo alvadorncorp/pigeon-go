@@ -105,6 +105,9 @@ func EncodeJSON(v any) ([]byte, error) {
 
 // Do sends req and returns the body and headers of a 2xx response. Any other
 // status becomes a *message.DeliveryError, even when its body exceeds the cap.
+// A 2xx body that cannot be read or exceeds maxResponseBytes returns a nil body
+// with nil error: the provider accepted the message, and reporting a failure
+// would make the documented retry guidance duplicate an accepted delivery.
 func (h *Client) Do(req *http.Request) ([]byte, http.Header, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "pigeon")
@@ -118,11 +121,11 @@ func (h *Client) Do(req *http.Request) ([]byte, http.Header, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, nil, responseError(h.provider, resp, body[:min(len(body), maxResponseBytes)])
 	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("pigeon: %s response: %w", h.provider, err)
-	}
-	if len(body) > maxResponseBytes {
-		return nil, nil, fmt.Errorf("pigeon: %s response exceeds %d bytes", h.provider, maxResponseBytes)
+	// The provider accepted the message, so an unreadable or oversized body only
+	// costs the receipt. It must not become an error: the application would
+	// retry an accepted delivery and the recipient would get a duplicate.
+	if err != nil || len(body) > maxResponseBytes {
+		return nil, resp.Header, nil
 	}
 	return body, resp.Header, nil
 }
